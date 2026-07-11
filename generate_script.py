@@ -9,6 +9,7 @@ SCRIPT_FILE   = r"C:\Users\jonhy\Desktop\script.txt"
 REFERENCE_WAV = r"C:\Users\jonhy\Desktop\audio-40s.wav"
 OUTPUT_DIR    = r"C:\Users\jonhy\Desktop\bloques"
 FINAL_OUTPUT  = r"C:\Users\jonhy\Desktop\script_completo.wav"
+SRT_OUTPUT    = r"C:\Users\jonhy\Desktop\script_completo.srt"
 MAX_CHARS     = 200  # ~20 segundos de habla por bloque
 CFG_VALUE    = 2.0
 INFERENCE_TIMESTEPS = 12
@@ -56,6 +57,33 @@ def dividir_en_bloques(texto, max_chars=MAX_CHARS):
     return bloques
 
 
+def segundos_a_srt(segundos):
+    total_ms = int(round(segundos * 1000))
+    h = total_ms // 3_600_000
+    total_ms %= 3_600_000
+    m = total_ms // 60_000
+    total_ms %= 60_000
+    sec = total_ms // 1000
+    ms = total_ms % 1000
+    return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+
+
+def generar_srt(entradas, output_path):
+    srt_lines = []
+    cursor = 0.0
+
+    for idx, (texto, duracion) in enumerate(entradas, start=1):
+        inicio = segundos_a_srt(cursor)
+        fin = segundos_a_srt(cursor + duracion)
+        srt_lines.append(f"{idx}\n{inicio} --> {fin}\n{texto}\n")
+        cursor += duracion
+
+    with open(output_path, "w", encoding="ansi") as f:
+        f.write("\n".join(srt_lines))
+
+    return len(srt_lines)
+
+
 # 1. Leer y dividir el texto
 with open(SCRIPT_FILE, "r", encoding="ansi") as f:
     contenido = f.read()
@@ -76,6 +104,7 @@ model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, optimize=
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 fragmentos = []
+entradas_srt = []
 fallidos = []
 
 # 3. Generar cada bloque
@@ -86,6 +115,7 @@ for i, bloque in enumerate(bloques):
         print(f"[{i+1}/{len(bloques)}] Ya existe: {bloque_path}")
         wav, sr = sf.read(bloque_path)
         fragmentos.append(wav)
+        entradas_srt.append((bloque, len(wav) / sr))
         continue
 
     print(f"\n[{i+1}/{len(bloques)}] Generando ({len(bloque)} caracteres)...")
@@ -104,6 +134,7 @@ for i, bloque in enumerate(bloques):
         )
         sf.write(bloque_path, wav, model.tts_model.sample_rate)
         fragmentos.append(wav)
+        entradas_srt.append((bloque, len(wav) / model.tts_model.sample_rate))
         print(f"  OK Guardado: {bloque_path}")
     except Exception as e:
         print(f"  ERROR en bloque {i+1}: {e}")
@@ -114,9 +145,11 @@ for i, bloque in enumerate(bloques):
 if fragmentos:
     print(f"\nConcatenando {len(fragmentos)} bloques...")
     audio_completo = np.concatenate(fragmentos)
-    sf.write(FINAL_OUTPUT, audio_completo, model.tts_model.sample_rate)
+    sr = model.tts_model.sample_rate
+    sf.write(FINAL_OUTPUT, audio_completo, sr)
     print(f"OK Audio completo: {FINAL_OUTPUT}")
-    print(f"\nAhora ejecuta: python generar_srt.py")
+    entradas = generar_srt(entradas_srt, SRT_OUTPUT)
+    print(f"OK SRT generado con {entradas} entradas: {SRT_OUTPUT}")
 
 if fallidos:
     print(f"\nBloques que fallaron: {fallidos}")
