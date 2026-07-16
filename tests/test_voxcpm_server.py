@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 
@@ -84,3 +85,9 @@ def test_service_passes_optimize_flag_to_model_loader(monkeypatch):
 
     assert DummyVoxCPM.calls[0]["kwargs"]["optimize"] is True
     assert DummyVoxCPM.calls[0]["kwargs"]["load_denoiser"] is False
+
+
+def test_mimalloc_purge_delay_configured():
+    # La env var debe quedar puesta con solo importar el modulo del servidor,
+    # antes de que cualquier carga de torch pueda leerla.
+    assert os.environ.get("MIMALLOC_PURGE_DELAY") == "0"

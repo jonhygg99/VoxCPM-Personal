@@ -2,6 +2,13 @@ import argparse
 import io
 import json
 import os
+
+# torch >= 2.7 en Windows usa mimalloc, que retiene ~11 GB de RAM comprometida
+# tras el churn de carga del modelo (construccion fp32 en CPU -> bf16 -> GPU).
+# Purga inmediata: la RAM baja de ~19 GB a ~7.4 GB sin coste apreciable.
+# Debe estar puesta antes de que se cargue torch (c10.dll).
+os.environ.setdefault("MIMALLOC_PURGE_DELAY", "0")
+
 import sys
 import threading
 import time
