@@ -29,26 +29,15 @@ DEFAULT_PORT = 8765
 DEFAULT_MODEL_ID = "openbmb/VoxCPM2"
 
 
-def apply_speed_flags(tf32=False, cudnn_benchmark=False, kv_window=False):
-    """Palancas de velocidad opt-in (desactivadas por defecto).
-
-    Ninguna cambia la calidad en distribucion, pero tf32 y kv_window NO son
-    bit-exact (con la misma seed el audio cambia, como si cambiaras de seed).
-    cudnn_benchmark mantiene los mismos numeros pero la eleccion de algoritmo
-    puede variar entre arranques. Comparalas A/B con:
-      python benchmark_voxcpm_inference.py --seed 1234 --compare-json base.json candidato.json
-    """
-    if kv_window:
-        # Leido por StaticKVCache al construir el modelo (antes de cargarlo).
-        os.environ["VOXCPM_KV_WINDOW"] = "1"
-    if tf32 or cudnn_benchmark:
-        import torch
-
-        if tf32:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-        if cudnn_benchmark:
-            torch.backends.cudnn.benchmark = True
+# Nota de performance: se midieron y DESCARTARON estas palancas opt-in
+# (benchmarks/bench_script.txt, seed 1234, vs bench_fase2_k1.json):
+# - torch.backends.cudnn.benchmark: re-autotunea con cada longitud de audio
+#   nueva del VAE (cada bloque decodifica una shape distinta) — el paquete
+#   tf32+cudnn+kv-window salio 36% MAS LENTO (bench_optin_flags.json).
+# - Ventana de atencion KV (slice del cache): ~12% mas lenta tras eliminar los
+#   H2D por paso, y no bit-exact (bench_kvwindow.json).
+# - TF32 solo tocaria el decode fp32 del VAE (~1.5% del tiempo): no compensa
+#   perder la reproducibilidad bit-exact.
 
 
 class VoxCPMService:
@@ -246,27 +235,8 @@ def main():
         action="store_true",
         help="Enable torch.compile/warmup optimization when the selected device supports it.",
     )
-    parser.add_argument(
-        "--tf32",
-        action="store_true",
-        help="Permite TF32 en los matmul/conv fp32 (decode del VAE). Mas rapido en GPUs Ampere+ "
-        "pero NO bit-exact: con la misma seed el audio cambia (misma calidad en distribucion).",
-    )
-    parser.add_argument(
-        "--cudnn-benchmark",
-        action="store_true",
-        help="Autotuning de kernels de cudnn para las convoluciones del VAE. La eleccion de "
-        "algoritmo puede variar entre arranques.",
-    )
-    parser.add_argument(
-        "--kv-window",
-        action="store_true",
-        help="Atencion solo sobre la ventana de posiciones validas del KV cache (~10%% mas rapido). "
-        "NO bit-exact: equivale a cambiar de seed, sin cambio de calidad en distribucion.",
-    )
     args = parser.parse_args()
 
-    apply_speed_flags(tf32=args.tf32, cudnn_benchmark=args.cudnn_benchmark, kv_window=args.kv_window)
     service = VoxCPMService(model_id=args.model_id, optimize=args.optimize)
     VoxCPMRequestHandler.service = service
     server = ThreadingHTTPServer((args.host, args.port), VoxCPMRequestHandler)

@@ -1,4 +1,3 @@
-import os
 from typing import List, Tuple
 import torch
 
@@ -29,20 +28,11 @@ class StaticKVCache:
         )
         # Buffer preallocated para construir la mascara de atencion sin un
         # torch.arange nuevo por capa y por paso.
+        # Nota: se probo atender solo sobre una ventana de posiciones validas
+        # (slice del cache); fue ~12% MAS LENTO (el slice no contiguo cae en un
+        # kernel de SDPA peor) y no bit-exact, asi que se descarto.
         self.position_arange = torch.arange(max_length, device=device)
         self.current_length = 0
-        # Opt-in: atender solo sobre la ventana de posiciones validas en vez de
-        # todo max_length. Es mas rapido pero NO bit-exact (el tiling de SDPA
-        # cambia con la longitud de K, alterando el orden de reduccion) — el
-        # efecto es equivalente a cambiar de seed, sin cambio de calidad en
-        # distribucion. Desactivado por defecto.
-        self.window_enabled = os.environ.get("VOXCPM_KV_WINDOW", "") == "1"
-
-    def window_length(self, bucket: int = 256) -> int:
-        """Longitud de atencion redondeada a multiplos de `bucket` (o max_length si esta desactivado)."""
-        if not self.window_enabled:
-            return self.max_length
-        return min(self.max_length, -(-self.current_length // bucket) * bucket)
 
     def get_layer_cache(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.kv_cache[0, layer_idx], self.kv_cache[1, layer_idx]

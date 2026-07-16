@@ -177,7 +177,6 @@ class MiniCPMAttention(nn.Module):
         position_id: int,
         kv_cache: Tuple[torch.Tensor, torch.Tensor],
         attn_mask: torch.Tensor = None,
-        window: int = None,
     ) -> torch.Tensor:
         bsz, _ = hidden_states.size()
 
@@ -197,12 +196,6 @@ class MiniCPMAttention(nn.Module):
 
         key_cache[:, :, position_id, :] = key_states
         value_cache[:, :, position_id, :] = value_states
-
-        # Atender solo sobre la ventana de posiciones validas (bit-exact: las
-        # posiciones fuera de la ventana estarian enmascaradas de todas formas).
-        if window is not None and window < key_cache.size(2):
-            key_cache = key_cache[:, :, :window]
-            value_cache = value_cache[:, :, :window]
 
         if attn_mask is None:
             # Use an explicit broadcastable mask shape for SDPA. A 1D mask can
@@ -304,7 +297,6 @@ class MiniCPMDecoderLayer(nn.Module):
         position_id: torch.Tensor,
         kv_cache: Tuple[torch.Tensor, torch.Tensor],
         attn_mask: torch.Tensor = None,
-        window: int = None,
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
@@ -315,7 +307,6 @@ class MiniCPMDecoderLayer(nn.Module):
             position_id=position_id,
             kv_cache=kv_cache,
             attn_mask=attn_mask,
-            window=window,
         )
 
         if self.use_mup:
@@ -419,9 +410,8 @@ class MiniCPMModel(nn.Module):
         hidden_states = inputs_embeds
 
         # La mascara es identica para todas las capas: construirla una sola vez
-        # sobre la ventana de posiciones validas (redondeada a buckets de 256).
-        window = self.kv_cache.window_length()
-        attn_mask = (self.kv_cache.position_arange[:window] <= position_id).view(1, 1, 1, -1)
+        # desde el buffer preallocated en vez de un arange por capa y por paso.
+        attn_mask = (self.kv_cache.position_arange <= position_id).view(1, 1, 1, -1)
 
         for i, decoder_layer in enumerate(self.layers):
             hidden_states = decoder_layer.forward_step(
@@ -430,7 +420,6 @@ class MiniCPMModel(nn.Module):
                 position_id,
                 self.kv_cache.get_layer_cache(i),
                 attn_mask,
-                window,
             )
 
         hidden_states = self.norm(hidden_states)
