@@ -59,6 +59,13 @@ from .utils import (
 
 VOXCPM_PROFILE = os.environ.get("VOXCPM_PROFILE", "") == "1"
 
+# Cada cuantos patches se transfiere el lote de stop-flags GPU->CPU en el bucle
+# autoregresivo (camino no-streaming). Un valor mayor reduce syncs (util con
+# torch.compile/CUDA graphs) pero genera hasta K-1 patches de mas que luego se
+# recortan (bit-exact en cualquier caso). En eager, medido: K=8 cuesta ~1.4%
+# por los patches desperdiciados, asi que el default es 1 (sin pasos extra).
+STOP_CHECK_BATCH = max(1, int(os.environ.get("VOXCPM_STOP_CHECK_BATCH", "1")))
+
 
 class _InferenceProfiler:
     """Per-request timing buckets for the AR loop, active only with VOXCPM_PROFILE=1 on CUDA.
@@ -1160,6 +1167,22 @@ class VoxCPM2Model(nn.Module):
         if profiler is not None:
             profiler.stop("prefill", prefill_event)
 
+        device = combined_embed.device
+        # Tensores de posicion persistentes: avanzan in-place con add_(1) en vez
+        # de crear un torch.tensor nuevo (H2D) en cada paso. kv_cache.step()
+        # sigue llevando el contador CPU (y valida la capacidad).
+        base_position = torch.tensor([self.base_lm.kv_cache.current_length], dtype=torch.long, device=device)
+        residual_position = torch.tensor(
+            [self.residual_lm.kv_cache.current_length], dtype=torch.long, device=device
+        )
+        if not streaming:
+            # Stop-check diferido: acumula los argmax en GPU y transfiere el lote
+            # cada STOP_CHECK_BATCH pasos para no vaciar la cola de la GPU con un
+            # sync por patch. Los patches generados de mas se recortan al mismo
+            # punto de corte que tendria el check por-paso (bit-exact).
+            stop_flags = torch.zeros(STOP_CHECK_BATCH, dtype=torch.long, device=device)
+            pending_flags = 0
+
         for i in tqdm(range(max_len)):
             dit_event = profiler.start() if profiler is not None else None
             dit_hidden_1 = self.lm_to_dit_proj(lm_hidden)  # [b, h_dit]
@@ -1196,26 +1219,52 @@ class VoxCPM2Model(nn.Module):
                 if len(pred_feat_seq) > streaming_prefix_len:
                     pred_feat_seq = pred_feat_seq[-streaming_prefix_len:]
 
-            stop_started = time.perf_counter() if profiler is not None else 0.0
-            stop_flag = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(dim=-1)[0].cpu().item()
-            if profiler is not None:
-                profiler.add_wall("stop_check_sync", time.perf_counter() - stop_started)
-            if i > min_len and stop_flag == 1:
-                break
+            if streaming:
+                stop_flag = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(dim=-1)[0].cpu().item()
+                if i > min_len and stop_flag == 1:
+                    break
+            else:
+                stop_started = time.perf_counter() if profiler is not None else 0.0
+                stop_flags[pending_flags] = self.stop_head(self.stop_actn(self.stop_proj(lm_hidden))).argmax(
+                    dim=-1
+                )[0]
+                pending_flags += 1
+                # Con el cache KV a punto de llenarse hay que comprobar ya, para
+                # no dar pasos extra que el check por-paso no habria dado.
+                kv_near_full = (
+                    self.base_lm.kv_cache.current_length + 1 >= self.base_lm.kv_cache.max_length
+                    or self.residual_lm.kv_cache.current_length + 1 >= self.residual_lm.kv_cache.max_length
+                )
+                if pending_flags == STOP_CHECK_BATCH or i == max_len - 1 or kv_near_full:
+                    flags = stop_flags[:pending_flags].tolist()
+                    if profiler is not None:
+                        profiler.add_wall("stop_check_sync", time.perf_counter() - stop_started)
+                    stop_at = None
+                    for j, flag in enumerate(flags):
+                        iter_idx = i - pending_flags + 1 + j
+                        if iter_idx > min_len and flag == 1:
+                            stop_at = iter_idx
+                            break
+                    pending_flags = 0
+                    if stop_at is not None:
+                        # Recorta los patches generados despues del punto de corte
+                        # (identico al break del check por-paso).
+                        pred_feat_seq = pred_feat_seq[: context_len + stop_at + 1]
+                        break
 
             base_lm_event = profiler.start() if profiler is not None else None
-            lm_hidden = self.base_lm.forward_step(
-                curr_embed[:, 0, :], torch.tensor([self.base_lm.kv_cache.step()], device=curr_embed.device)
-            ).clone()
+            self.base_lm.kv_cache.step()
+            lm_hidden = self.base_lm.forward_step(curr_embed[:, 0, :], base_position).clone()
+            base_position.add_(1)
             if profiler is not None:
                 profiler.stop("base_lm_step", base_lm_event)
 
             residual_lm_event = profiler.start() if profiler is not None else None
             lm_hidden = self.fsq_layer(lm_hidden)
             curr_residual_input = self.fusion_concat_proj(torch.cat((lm_hidden, curr_embed[:, 0, :]), dim=-1))
-            residual_hidden = self.residual_lm.forward_step(
-                curr_residual_input, torch.tensor([self.residual_lm.kv_cache.step()], device=curr_embed.device)
-            ).clone()
+            self.residual_lm.kv_cache.step()
+            residual_hidden = self.residual_lm.forward_step(curr_residual_input, residual_position).clone()
+            residual_position.add_(1)
             if profiler is not None:
                 profiler.stop("residual_lm_step", residual_lm_event)
 
