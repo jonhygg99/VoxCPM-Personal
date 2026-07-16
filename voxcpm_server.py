@@ -233,7 +233,10 @@ def main():
     parser.add_argument(
         "--optimize",
         action="store_true",
-        help="Enable torch.compile/warmup optimization when the selected device supports it.",
+        help="Enable torch.compile/warmup optimization when the selected device supports it. "
+        "OJO: requiere triton (no instalado en este entorno -> no compila nada y solo queda el "
+        "warmup, que tarda minutos y ademas cambia los numericos: con la misma seed el audio "
+        "sale distinto que sin --optimize). Medido 2026-07-17: 1.5%% MAS LENTO que sin el flag.",
     )
     args = parser.parse_args()
 
