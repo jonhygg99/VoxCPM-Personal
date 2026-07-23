@@ -14,11 +14,12 @@ from tts_workflow import (
     write_srt,
     write_wav_bytes,
 )
+from voices.david import PROMPT_TEXT
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server, generate_wav_bytes_with_metrics
 
 # --- Configura aqui ---
 SCRIPT_FILE = r"C:\Users\jonhy\Desktop\script.txt"
-REFERENCE_WAV = r"C:\Users\jonhy\Desktop\audio-40s.wav"
+REFERENCE_WAV = r"voices\david.wav"
 OUTPUT_DIR = r"C:\Users\jonhy\Desktop\bloques"
 FINAL_OUTPUT = r"C:\Users\jonhy\Desktop\script_completo.wav"
 SRT_OUTPUT = r"C:\Users\jonhy\Desktop\script_completo.srt"
@@ -33,15 +34,6 @@ NORMALIZE = False
 AUDIT_ONLY = False
 METRIC_KEYS = ("cache_seconds", "inference_seconds", "wav_write_seconds", "queue_seconds", "request_seconds")
 
-PROMPT_TEXT = (
-    "F\u00edjate nada m\u00e1s lo que acaba de pasar... porque esto que les voy a contar hoy no es un chisme cualquiera "
-    "de los que se olvidan en tres d\u00edas. Estamos hablando de la ruptura que todo M\u00e9xico ten\u00eda en la boca desde "
-    "el 6 de junio, s\u00ed, la de Kenia Os y Peso Pluma, pero lo que los medios no te est\u00e1n contando \u2014y que nosotros "
-    "encontramos despu\u00e9s de rastrear m\u00e1s de doce fuentes, tres semanas de movimientos digitales y cada historia "
-    "borrada\u2014 es que la verdad no est\u00e1 en el comunicado. La verdad estaba en el escenario, siete d\u00edas antes, "
-    "cuando Kenia Os se derrumb\u00f3 frente a miles de personas en Monterrey cantando una canci\u00f3n que describe, "
-    "con nombre y apellido psicol\u00f3gico, exactamente lo que le hicieron."
-)
 # ----------------------
 
 
