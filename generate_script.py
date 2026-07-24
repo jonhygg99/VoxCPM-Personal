@@ -14,11 +14,12 @@ from tts_workflow import (
     write_srt,
     write_wav_bytes,
 )
+from voices.david import PROMPT_TEXT
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server, generate_wav_bytes_with_metrics
 
 # --- Configura aqui ---
 SCRIPT_FILE = r"C:\Users\jonhy\Desktop\script.txt"
-REFERENCE_WAV = r"C:\Users\jonhy\Desktop\audio-40s.wav"
+REFERENCE_WAV = r"voices\david.wav"
 OUTPUT_DIR = r"C:\Users\jonhy\Desktop\bloques"
 FINAL_OUTPUT = r"C:\Users\jonhy\Desktop\script_completo.wav"
 SRT_OUTPUT = r"C:\Users\jonhy\Desktop\script_completo.srt"
@@ -33,49 +34,56 @@ NORMALIZE = False
 AUDIT_ONLY = False
 METRIC_KEYS = ("cache_seconds", "inference_seconds", "wav_write_seconds", "queue_seconds", "request_seconds")
 
-PROMPT_TEXT = (
-    "F\u00edjate nada m\u00e1s lo que acaba de pasar... porque esto que les voy a contar hoy no es un chisme cualquiera "
-    "de los que se olvidan en tres d\u00edas. Estamos hablando de la ruptura que todo M\u00e9xico ten\u00eda en la boca desde "
-    "el 6 de junio, s\u00ed, la de Kenia Os y Peso Pluma, pero lo que los medios no te est\u00e1n contando \u2014y que nosotros "
-    "encontramos despu\u00e9s de rastrear m\u00e1s de doce fuentes, tres semanas de movimientos digitales y cada historia "
-    "borrada\u2014 es que la verdad no est\u00e1 en el comunicado. La verdad estaba en el escenario, siete d\u00edas antes, "
-    "cuando Kenia Os se derrumb\u00f3 frente a miles de personas en Monterrey cantando una canci\u00f3n que describe, "
-    "con nombre y apellido psicol\u00f3gico, exactamente lo que le hicieron."
-)
 # ----------------------
 
 
-def main():
+def run(
+    script_file=SCRIPT_FILE,
+    blocks_dir=OUTPUT_DIR,
+    final_output=FINAL_OUTPUT,
+    srt_output=SRT_OUTPUT,
+    reference_wav=REFERENCE_WAV,
+    prompt_text=PROMPT_TEXT,
+    model_id=MODEL_ID,
+    server_url=SERVER_URL,
+    max_chars=MAX_CHARS,
+    cfg_value=CFG_VALUE,
+    inference_timesteps=INFERENCE_TIMESTEPS,
+    normalize=NORMALIZE,
+    script_encoding=SCRIPT_ENCODING,
+    srt_encoding=SRT_ENCODING,
+    audit_only=AUDIT_ONLY,
+):
     total_start = time.perf_counter()
-    paragraphs, blocks = read_paragraph_blocks(SCRIPT_FILE, MAX_CHARS, encoding=SCRIPT_ENCODING)
-    print(f"Se encontraron {len(paragraphs)} parrafos en '{SCRIPT_FILE}'")
-    print(f"Divididos en {len(blocks)} bloques de max. {MAX_CHARS} caracteres (~20s c/u)\n")
+    paragraphs, blocks = read_paragraph_blocks(script_file, max_chars, encoding=script_encoding)
+    print(f"Se encontraron {len(paragraphs)} parrafos en '{script_file}'")
+    print(f"Divididos en {len(blocks)} bloques de max. {max_chars} caracteres (~20s c/u)\n")
 
     def build_payload(block):
         return build_voxcpm_payload(
             text=block,
-            model_id=MODEL_ID,
-            prompt_text=PROMPT_TEXT,
-            reference_wav=REFERENCE_WAV,
-            cfg_value=CFG_VALUE,
-            inference_timesteps=INFERENCE_TIMESTEPS,
-            normalize=NORMALIZE,
+            model_id=model_id,
+            prompt_text=prompt_text,
+            reference_wav=reference_wav,
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+            normalize=normalize,
         )
 
     def block_path_for(index):
-        return os.path.join(OUTPUT_DIR, f"bloque_{index:03d}.wav")
+        return os.path.join(blocks_dir, f"bloque_{index:03d}.wav")
 
-    ensure_dirs(OUTPUT_DIR)
+    ensure_dirs(blocks_dir)
 
-    if AUDIT_ONLY:
+    if audit_only:
         reusable = sum(1 for i in range(1, len(blocks) + 1) if os.path.exists(block_path_for(i)))
         missing = len(blocks) - reusable
         print(f"Auditoria cache: {reusable} reutilizables, {missing} nuevos, {len(blocks)} total")
         return
 
     try:
-        health = check_server(SERVER_URL)
-        print(f"Servidor VoxCPM listo: {health.get('model_id', MODEL_ID)}")
+        health = check_server(server_url)
+        print(f"Servidor VoxCPM listo: {health.get('model_id', model_id)}")
         print(f"Caches de voz activas: {health.get('prompt_caches', 0)}")
     except VoxCPMServerError as e:
         print(f"ERROR: {e}")
@@ -112,7 +120,7 @@ def main():
             request_start = time.perf_counter()
             wav_bytes, metrics = generate_wav_bytes_with_metrics(
                 payload,
-                SERVER_URL,
+                server_url,
             )
             elapsed = time.perf_counter() - request_start
             write_wav_bytes(block_path, wav_bytes)
@@ -145,10 +153,10 @@ def main():
     if fragments:
         print(f"\nConcatenando {len(fragments)} bloques...")
         audio_complete = concatenate_wavs(fragments)
-        sf.write(FINAL_OUTPUT, audio_complete, sample_rate)
-        print(f"OK Audio completo: {FINAL_OUTPUT}")
-        entries = write_srt(srt_entries, SRT_OUTPUT, encoding=SRT_ENCODING)
-        print(f"OK SRT generado con {entries} entradas: {SRT_OUTPUT}")
+        sf.write(final_output, audio_complete, sample_rate)
+        print(f"OK Audio completo: {final_output}")
+        entries = write_srt(srt_entries, srt_output, encoding=srt_encoding)
+        print(f"OK SRT generado con {entries} entradas: {srt_output}")
 
     if failed:
         print(f"\nBloques que fallaron: {failed}")
@@ -173,6 +181,10 @@ def main():
             f"({metric_totals['queue_seconds'] / metric_count:.2f}s prom), "
             f"request servidor {metric_totals['request_seconds']:.2f}s total"
         )
+
+
+def main():
+    run()
 
 
 if __name__ == "__main__":

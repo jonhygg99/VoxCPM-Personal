@@ -44,6 +44,30 @@ def test_parse_structured_shorts_reads_script_lines(tmp_path):
     assert parse_structured_shorts(str(input_file), encoding="utf-8") == ["primer short", "segundo short"]
 
 
+def test_parse_structured_shorts_reads_short_n_headers(tmp_path):
+    """Formato real usado por el usuario: 'SHORT N - titulo' + parrafo, sin --- ni Script:."""
+    input_file = Path(tmp_path) / "shorts.txt"
+    input_file.write_text(
+        "SHORT 1 — La injusticia que NADIE quiere ver\n\n"
+        "Primer guion hablado, parrafo completo.\n\n"
+        "SHORT 2 — Univision NO firmo su despido\n\n"
+        "Segundo guion hablado.\n",
+        encoding="utf-8",
+    )
+
+    assert parse_structured_shorts(str(input_file), encoding="utf-8") == [
+        "Primer guion hablado, parrafo completo.",
+        "Segundo guion hablado.",
+    ]
+
+
+def test_parse_structured_shorts_returns_empty_when_no_recognized_format(tmp_path):
+    input_file = Path(tmp_path) / "shorts.txt"
+    input_file.write_text("Solo texto plano, sin cabeceras ni marcadores.\n", encoding="utf-8")
+
+    assert parse_structured_shorts(str(input_file), encoding="utf-8") == []
+
+
 def test_build_voxcpm_payload_preserves_quality_parameters():
     payload = build_voxcpm_payload(
         text="bloque",
