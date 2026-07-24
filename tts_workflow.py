@@ -65,6 +65,15 @@ def read_paragraph_blocks(path, max_chars, encoding="ansi"):
 
 def parse_structured_shorts(path, encoding="ansi"):
     content = read_text(path, encoding=encoding)
+
+    shorts = _parse_shorts_by_script_sections(content)
+    if shorts:
+        return shorts
+
+    return _parse_shorts_by_short_headers(content)
+
+
+def _parse_shorts_by_script_sections(content):
     sections = re.split(r"^---\s*$", content, flags=re.MULTILINE)
     shorts = []
 
@@ -79,6 +88,34 @@ def parse_structured_shorts(path, encoding="ansi"):
                 shorts.append(text)
 
     return shorts
+
+
+def _parse_shorts_by_short_headers(content):
+    """Formato alterno: parrafos 'SHORT N - titulo' seguidos del guion hablado.
+
+    El parrafo de cabecera (el titulo) no se narra; el cuerpo del short es la
+    union de los parrafos siguientes hasta la proxima cabecera.
+    """
+    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+    header_re = re.compile(r"^SHORT\s+\d+", re.IGNORECASE)
+
+    shorts = []
+    current_parts = []
+    found_header = False
+
+    for paragraph in paragraphs:
+        if header_re.match(paragraph):
+            found_header = True
+            if current_parts:
+                shorts.append(" ".join(current_parts))
+                current_parts = []
+            continue
+        current_parts.append(paragraph)
+
+    if current_parts:
+        shorts.append(" ".join(current_parts))
+
+    return shorts if found_header else []
 
 
 def seconds_to_srt(seconds):

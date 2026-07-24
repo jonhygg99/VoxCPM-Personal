@@ -39,31 +39,55 @@ METRIC_KEYS = ("cache_seconds", "inference_seconds", "wav_write_seconds", "queue
 # ----------------------
 
 
-def main():
+def run(
+    script_file=SCRIPT_FILE,
+    shorts_dir=OUTPUT_DIR,
+    bloques_dir=BLOQUES_DIR,
+    srt_output=SRT_OUTPUT,
+    reference_wav=REFERENCE_WAV,
+    prompt_text=PROMPT_TEXT,
+    model_id=MODEL_ID,
+    server_url=SERVER_URL,
+    max_chars=MAX_CHARS,
+    cfg_value=CFG_VALUE,
+    inference_timesteps=INFERENCE_TIMESTEPS,
+    normalize=NORMALIZE,
+    script_encoding=SCRIPT_ENCODING,
+    srt_encoding=SRT_ENCODING,
+    audit_only=AUDIT_ONLY,
+):
     total_start = time.perf_counter()
-    shorts = parse_structured_shorts(SCRIPT_FILE, encoding=SCRIPT_ENCODING)
-    print(f"Se encontraron {len(shorts)} shorts en '{SCRIPT_FILE}'")
+    shorts = parse_structured_shorts(script_file, encoding=script_encoding)
+    print(f"Se encontraron {len(shorts)} shorts en '{script_file}'")
+
+    if not shorts:
+        print(
+            f"No se encontraron shorts en '{script_file}' -- revisa el formato "
+            "('SHORT N - titulo' + parrafo, o secciones '---' con 'Script:'). "
+            "No se genera nada."
+        )
+        return
 
     def build_payload(block):
         return build_voxcpm_payload(
             text=block,
-            model_id=MODEL_ID,
-            prompt_text=PROMPT_TEXT,
-            reference_wav=REFERENCE_WAV,
-            cfg_value=CFG_VALUE,
-            inference_timesteps=INFERENCE_TIMESTEPS,
-            normalize=NORMALIZE,
+            model_id=model_id,
+            prompt_text=prompt_text,
+            reference_wav=reference_wav,
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+            normalize=normalize,
         )
 
     def block_path_for(short_idx, block_idx):
-        return os.path.join(BLOQUES_DIR, f"short_{short_idx:02d}_bloque_{block_idx:03d}.wav")
+        return os.path.join(bloques_dir, f"short_{short_idx:02d}_bloque_{block_idx:03d}.wav")
 
-    ensure_dirs(OUTPUT_DIR, BLOQUES_DIR)
+    ensure_dirs(shorts_dir, bloques_dir)
 
-    if AUDIT_ONLY:
+    if audit_only:
         total = {"total": 0, "reusable": 0, "missing": 0}
         for short_idx, short_text in enumerate(shorts, start=1):
-            blocks = split_text_blocks(short_text, MAX_CHARS)
+            blocks = split_text_blocks(short_text, max_chars)
             reusable = sum(
                 1 for block_idx in range(1, len(blocks) + 1) if os.path.exists(block_path_for(short_idx, block_idx))
             )
@@ -76,8 +100,8 @@ def main():
         return
 
     try:
-        health = check_server(SERVER_URL)
-        print(f"\nServidor VoxCPM listo: {health.get('model_id', MODEL_ID)}")
+        health = check_server(server_url)
+        print(f"\nServidor VoxCPM listo: {health.get('model_id', model_id)}")
         print(f"Caches de voz activas: {health.get('prompt_caches', 0)}")
     except VoxCPMServerError as e:
         print(f"\nERROR: {e}")
@@ -96,8 +120,8 @@ def main():
         print(f"SHORT {short_idx}/{len(shorts)}: {short_text[:80]}{'...' if len(short_text) > 80 else ''}")
         print(f"{'=' * 60}")
 
-        blocks = split_text_blocks(short_text, MAX_CHARS)
-        print(f"  {len(blocks)} bloques de max. {MAX_CHARS} chars")
+        blocks = split_text_blocks(short_text, max_chars)
+        print(f"  {len(blocks)} bloques de max. {max_chars} chars")
 
         fragments = []
         srt_entries = []
@@ -124,7 +148,7 @@ def main():
                 request_start = time.perf_counter()
                 wav_bytes, metrics = generate_wav_bytes_with_metrics(
                     payload,
-                    SERVER_URL,
+                    server_url,
                 )
                 elapsed = time.perf_counter() - request_start
                 write_wav_bytes(block_path, wav_bytes)
@@ -159,7 +183,7 @@ def main():
             continue
 
         audio_short = concatenate_wavs(fragments)
-        short_path = os.path.join(OUTPUT_DIR, f"short_{short_idx}.wav")
+        short_path = os.path.join(shorts_dir, f"short_{short_idx}.wav")
         sf.write(short_path, audio_short, sample_rate)
         print(f"\n  OK Audio guardado: {short_path}")
         srt_sections.append((f"Short {short_idx}", srt_entries))
@@ -169,13 +193,13 @@ def main():
         srt_lines.append(f"#{title}\n")
         srt_lines.extend(build_srt_entries(entries))
 
-    with open(SRT_OUTPUT, "w", encoding=SRT_ENCODING) as f:
+    with open(srt_output, "w", encoding=srt_encoding) as f:
         f.write("\n".join(srt_lines))
 
     total_elapsed = time.perf_counter() - total_start
     avg = generated_seconds / generated_count if generated_count else 0.0
-    print(f"\nOK SRT guardado en: {SRT_OUTPUT}")
-    print(f"OK Audios en: {OUTPUT_DIR}")
+    print(f"\nOK SRT guardado en: {srt_output}")
+    print(f"OK Audios en: {shorts_dir}")
     print(
         "Resumen: "
         f"{generated_count} generados, {reused_count} reutilizados, "
@@ -194,6 +218,10 @@ def main():
             f"({metric_totals['queue_seconds'] / metric_count:.2f}s prom), "
             f"request servidor {metric_totals['request_seconds']:.2f}s total"
         )
+
+
+def main():
+    run()
 
 
 if __name__ == "__main__":
