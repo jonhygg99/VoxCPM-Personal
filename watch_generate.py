@@ -23,6 +23,7 @@ from typing import Optional
 
 import generate_script
 import generate_shorts
+from audio_qa import AudioQA
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server
 
 DEFAULT_WATCH_DIR = r"D:\Obsidian Vaults\Chismes MX\Generate"
@@ -118,7 +119,7 @@ def is_done(plan):
     return False
 
 
-def process_file(txt_path, watch_dir, server_url):
+def process_file(txt_path, watch_dir, server_url, qa=None, validate_audio=True):
     plan = plan_outputs(txt_path, watch_dir)
 
     if plan.kind is None:
@@ -144,6 +145,8 @@ def process_file(txt_path, watch_dir, server_url):
             final_output=plan.final_output,
             srt_output=plan.srt_output,
             server_url=server_url,
+            validate_audio=validate_audio,
+            qa=qa,
         )
     else:
         generate_shorts.run(
@@ -152,14 +155,16 @@ def process_file(txt_path, watch_dir, server_url):
             bloques_dir=plan.blocks_dir,
             srt_output=plan.srt_output,
             server_url=server_url,
+            validate_audio=validate_audio,
+            qa=qa,
         )
 
 
-def scan_once(watch_dir, server_url):
+def scan_once(watch_dir, server_url, qa=None, validate_audio=True):
     pattern = os.path.join(watch_dir, "*.txt")
     for txt_path in sorted(glob.glob(pattern)):
         try:
-            process_file(txt_path, watch_dir, server_url)
+            process_file(txt_path, watch_dir, server_url, qa=qa, validate_audio=validate_audio)
         except Exception as exc:
             print(f"ERROR procesando '{txt_path}': {exc}")
             traceback.print_exc()
@@ -171,10 +176,27 @@ def main():
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_SECONDS)
     parser.add_argument("--server-url", default=DEFAULT_SERVER_URL)
     parser.add_argument("--once", action="store_true", help="Ejecuta un solo ciclo y termina (util para pruebas).")
+    parser.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="Desactiva el chequeo de calidad de audio (idioma/similitud/duracion, ver audio_qa.py).",
+    )
+    parser.add_argument("--qa-model", default="small", help="Modelo faster-whisper para el chequeo de calidad.")
+    parser.add_argument(
+        "--qa-device", default="cpu", help="Device para el chequeo de calidad (la GPU la usa el server)."
+    )
     args = parser.parse_args()
 
     print(f"Vigilando '{args.watch_dir}' cada {args.interval:.0f}s (servidor: {args.server_url})")
     print("Deja esta ventana abierta. El modelo debe estar cargado en voxcpm_server.py.")
+
+    validate_audio = not args.no_validate
+    qa = None
+    if validate_audio:
+        print(f"Cargando modelo QA ({args.qa_model} en {args.qa_device})...")
+        qa = AudioQA(model_name=args.qa_model, device=args.qa_device)
+    else:
+        print("Chequeo de calidad de audio DESACTIVADO (--no-validate).")
 
     while True:
         try:
@@ -182,7 +204,7 @@ def main():
         except VoxCPMServerError as exc:
             print(f"Servidor VoxCPM no disponible: {exc}")
         else:
-            scan_once(args.watch_dir, args.server_url)
+            scan_once(args.watch_dir, args.server_url, qa=qa, validate_audio=validate_audio)
 
         if args.once:
             break

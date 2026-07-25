@@ -4,15 +4,15 @@ import traceback
 
 import soundfile as sf
 
+from audio_qa import AudioQA, QAThresholds
 from tts_workflow import (
     build_voxcpm_payload,
     concatenate_wavs,
     ensure_dirs,
-    get_audio_info,
+    generate_validated_block,
     read_paragraph_blocks,
-    read_wav,
+    write_qa_report,
     write_srt,
-    write_wav_bytes,
 )
 from voices.david import PROMPT_TEXT
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server, generate_wav_bytes_with_metrics
@@ -34,6 +34,13 @@ NORMALIZE = False
 AUDIT_ONLY = False
 METRIC_KEYS = ("cache_seconds", "inference_seconds", "wav_write_seconds", "queue_seconds", "request_seconds")
 
+# Control de calidad de audio (ver audio_qa.py): detecta bloques donde el TTS
+# alucino -- p.ej. hablo en otro idioma o repitio/corto el audio.
+VALIDATE_AUDIO = True
+QA_MODEL = "small"
+QA_DEVICE = "cpu"  # la GPU ya la ocupa voxcpm_server.py
+MAX_RETRIES = 2  # reintentos con otra seed antes de poner el bloque en cuarentena
+
 # ----------------------
 
 
@@ -53,13 +60,16 @@ def run(
     script_encoding=SCRIPT_ENCODING,
     srt_encoding=SRT_ENCODING,
     audit_only=AUDIT_ONLY,
+    validate_audio=VALIDATE_AUDIO,
+    qa=None,
+    max_retries=MAX_RETRIES,
 ):
     total_start = time.perf_counter()
     paragraphs, blocks = read_paragraph_blocks(script_file, max_chars, encoding=script_encoding)
     print(f"Se encontraron {len(paragraphs)} parrafos en '{script_file}'")
     print(f"Divididos en {len(blocks)} bloques de max. {max_chars} caracteres (~20s c/u)\n")
 
-    def build_payload(block):
+    def build_payload(block, seed=None):
         return build_voxcpm_payload(
             text=block,
             model_id=model_id,
@@ -68,6 +78,7 @@ def run(
             cfg_value=cfg_value,
             inference_timesteps=inference_timesteps,
             normalize=normalize,
+            seed=seed,
         )
 
     def block_path_for(index):
@@ -89,9 +100,16 @@ def run(
         print(f"ERROR: {e}")
         raise SystemExit(1) from e
 
+    if validate_audio and qa is None:
+        print(f"Cargando modelo QA ({QA_MODEL} en {QA_DEVICE})...")
+        qa = AudioQA(model_name=QA_MODEL, device=QA_DEVICE, thresholds=QAThresholds())
+    elif not validate_audio:
+        qa = None
+
     fragments = []
     srt_entries = []
     failed = []
+    qa_failures = []
     generated_count = 0
     reused_count = 0
     generated_seconds = 0.0
@@ -99,56 +117,70 @@ def run(
     metric_count = 0
     sample_rate = None
 
+    def generate_fn(payload):
+        return generate_wav_bytes_with_metrics(payload, server_url)
+
     for i, block in enumerate(blocks, start=1):
         block_path = block_path_for(i)
 
         if os.path.exists(block_path):
-            info = get_audio_info(block_path)
-            wav, sr = read_wav(block_path)
-            sample_rate = sample_rate or sr
-            fragments.append(wav)
-            srt_entries.append((block, info.duration))
+            result = generate_validated_block(block, block_path, build_payload, generate_fn, qa=None)
+            sample_rate = sample_rate or result.sample_rate
+            fragments.append(result.wav)
+            srt_entries.append((block, result.duration))
             reused_count += 1
-            print(f"[{i}/{len(blocks)}] Reutilizado: {block_path} ({info.duration:.2f}s)")
+            print(f"[{i}/{len(blocks)}] Reutilizado: {block_path} ({result.duration:.2f}s)")
             continue
 
-        payload = build_payload(block)
         print(f"\n[{i}/{len(blocks)}] Generando ({len(block)} caracteres)...")
         print(f"  -> {block[:90]}{'...' if len(block) > 90 else ''}")
 
         try:
-            request_start = time.perf_counter()
-            wav_bytes, metrics = generate_wav_bytes_with_metrics(
-                payload,
-                server_url,
+            result = generate_validated_block(
+                block,
+                block_path,
+                build_payload,
+                generate_fn,
+                qa=qa,
+                max_retries=max_retries,
             )
-            elapsed = time.perf_counter() - request_start
-            write_wav_bytes(block_path, wav_bytes)
-
-            info = get_audio_info(block_path)
-            wav, sr = read_wav(block_path)
-            sample_rate = sample_rate or sr
-            fragments.append(wav)
-            srt_entries.append((block, info.duration))
-            generated_count += 1
-            generated_seconds += elapsed
-            if metrics:
-                metric_count += 1
-                for key in METRIC_KEYS:
-                    metric_totals[key] += float(metrics.get(key, 0.0))
-                print(
-                    f"  OK Guardado: {block_path} ({info.duration:.2f}s audio, {elapsed:.2f}s local | "
-                    f"cache {metrics.get('cache_seconds', 0):.2f}s, "
-                    f"inferencia {metrics.get('inference_seconds', 0):.2f}s, "
-                    f"wav {metrics.get('wav_write_seconds', 0):.2f}s, "
-                    f"cola {metrics.get('queue_seconds', 0):.2f}s)"
-                )
-            else:
-                print(f"  OK Guardado: {block_path} ({info.duration:.2f}s audio, {elapsed:.2f}s generacion)")
         except Exception as e:
             print(f"  ERROR en bloque {i}: {e}")
             traceback.print_exc()
             failed.append(i)
+            continue
+
+        generated_seconds += result.elapsed_seconds
+        if result.metrics:
+            metric_count += 1
+            for key in METRIC_KEYS:
+                metric_totals[key] += float(result.metrics.get(key, 0.0))
+
+        if result.status == "quarantined":
+            qa_failures.append((i, block, result.qa_result))
+            print(
+                f"  RECHAZADO bloque {i} tras {result.attempts} intento(s): " f"{'; '.join(result.qa_result.reasons)}"
+            )
+            continue
+
+        generated_count += 1
+        sample_rate = sample_rate or result.sample_rate
+        fragments.append(result.wav)
+        srt_entries.append((block, result.duration))
+        if result.metrics:
+            print(
+                f"  OK Guardado: {block_path} ({result.duration:.2f}s audio, "
+                f"{result.elapsed_seconds:.2f}s local | "
+                f"cache {result.metrics.get('cache_seconds', 0):.2f}s, "
+                f"inferencia {result.metrics.get('inference_seconds', 0):.2f}s, "
+                f"wav {result.metrics.get('wav_write_seconds', 0):.2f}s, "
+                f"cola {result.metrics.get('queue_seconds', 0):.2f}s)"
+            )
+        else:
+            print(
+                f"  OK Guardado: {block_path} ({result.duration:.2f}s audio, "
+                f"{result.elapsed_seconds:.2f}s generacion)"
+            )
 
     if fragments:
         print(f"\nConcatenando {len(fragments)} bloques...")
@@ -159,14 +191,22 @@ def run(
         print(f"OK SRT generado con {entries} entradas: {srt_output}")
 
     if failed:
-        print(f"\nBloques que fallaron: {failed}")
+        print(f"\nBloques que fallaron (error de servidor/red): {failed}")
+
+    if qa_failures:
+        report_path = write_qa_report(qa_failures, blocks_dir)
+        print(
+            f"\n{len(qa_failures)} bloque(s) no pasaron QA y quedaron en cuarentena "
+            f"(ver {report_path}). Vuelve a ejecutar para reintentarlos."
+        )
 
     total_elapsed = time.perf_counter() - total_start
     avg = generated_seconds / generated_count if generated_count else 0.0
     print(
         "\nResumen: "
         f"{generated_count} generados, {reused_count} reutilizados, "
-        f"{len(failed)} fallidos, {total_elapsed:.2f}s total, {avg:.2f}s promedio/bloque nuevo"
+        f"{len(failed)} fallidos, {len(qa_failures)} en cuarentena, "
+        f"{total_elapsed:.2f}s total, {avg:.2f}s promedio/bloque nuevo"
     )
     if metric_count:
         print(
