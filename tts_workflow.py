@@ -1,7 +1,9 @@
 import os
+import random
 import re
+import time
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Optional
 
 import numpy as np
 import soundfile as sf
@@ -197,3 +199,135 @@ def build_voxcpm_payload(
 def ensure_dirs(*paths):
     for path in paths:
         os.makedirs(path, exist_ok=True)
+
+
+def write_qa_report(failures, output_dir, filename="qa_report.txt"):
+    """Escribe un reporte legible de los bloques que quedaron en cuarentena.
+
+    `failures` es una lista de `(indice, texto, qa_result)`. Devuelve la ruta
+    del reporte escrito.
+    """
+    report_path = os.path.join(output_dir, filename)
+    lines = [f"{len(failures)} bloque(s) en cuarentena (no pasaron QA):\n"]
+    for index, text, qa_result in failures:
+        lines.append(f"--- Bloque {index} ---")
+        lines.append(f"Texto pedido: {text}")
+        lines.append(f"Transcripcion: {qa_result.transcript}")
+        lines.append(f"Idioma detectado: {qa_result.language} (prob={qa_result.language_prob:.2f})")
+        lines.append(f"Similitud: {qa_result.similarity:.2f}")
+        lines.append(f"Ratio de duracion: {qa_result.duration_ratio:.2f}")
+        lines.append(f"Razones: {'; '.join(qa_result.reasons)}")
+        lines.append("")
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return report_path
+
+
+@dataclass(frozen=True)
+class BlockResult:
+    """Resultado de generar (o reutilizar) el audio de un bloque.
+
+    status:
+      - "reused": ya existia en `block_path` (paso QA en una corrida previa).
+      - "generated": se genero y (si `qa` estaba activo) paso el chequeo.
+      - "quarantined": agoto los reintentos sin pasar QA; el intento final
+        quedo en `<block_path sin ext>.rejected.wav`, `block_path` NO se
+        escribio, y por lo tanto el bloque se regenerara en el proximo rerun.
+    """
+
+    status: str
+    text: str
+    wav: Optional[np.ndarray] = None
+    sample_rate: Optional[int] = None
+    duration: float = 0.0
+    qa_result: object = None
+    attempts: int = 0
+    elapsed_seconds: float = 0.0
+    metrics: Optional[dict] = None
+
+
+def rejected_path_for(block_path):
+    root, _ext = os.path.splitext(block_path)
+    return f"{root}.rejected.wav"
+
+
+def generate_validated_block(
+    text,
+    block_path,
+    build_payload,
+    generate_fn,
+    qa=None,
+    max_retries=0,
+    log=print,
+):
+    """Genera el audio de un bloque, reutilizando `block_path` si ya existe.
+
+    Si `qa` se provee (cualquier objeto con `.validate(text, wav_path,
+    duration) -> resultado con .ok y .reasons`), valida cada intento antes de
+    aceptarlo. En caso de fallo reintenta hasta `max_retries` veces mas,
+    variando la seed via `build_payload(text, seed=...)`. Si sigue fallando,
+    el bloque se pone en cuarentena (ver `BlockResult.status`).
+
+    `generate_fn(payload) -> (wav_bytes, metrics)` aisla la llamada HTTP al
+    servidor para que esta funcion sea testeable sin red. Errores de
+    `generate_fn` (problemas de servidor/red) se propagan de inmediato, sin
+    reintentar -- los reintentos aqui son solo para fallos de calidad.
+    """
+    if os.path.exists(block_path):
+        info = get_audio_info(block_path)
+        wav, sr = read_wav(block_path)
+        return BlockResult(status="reused", text=text, wav=wav, sample_rate=sr, duration=info.duration)
+
+    tmp_path = block_path + ".tmp.wav"
+    attempts = 0
+    total_elapsed = 0.0
+    qa_result = None
+    metrics = None
+
+    try:
+        while True:
+            attempts += 1
+            seed = random.randint(0, 2**31 - 1) if attempts > 1 else None
+            payload = build_payload(text, seed=seed)
+
+            request_start = time.perf_counter()
+            wav_bytes, metrics = generate_fn(payload)
+            total_elapsed += time.perf_counter() - request_start
+            write_wav_bytes(tmp_path, wav_bytes)
+            info = get_audio_info(tmp_path)
+
+            if qa is not None:
+                qa_result = qa.validate(text, tmp_path, info.duration)
+                if not qa_result.ok:
+                    log(f"    QA fallo (intento {attempts}/{max_retries + 1}): {'; '.join(qa_result.reasons)}")
+                    if attempts <= max_retries:
+                        continue
+                    rejected_path = rejected_path_for(block_path)
+                    os.replace(tmp_path, rejected_path)
+                    return BlockResult(
+                        status="quarantined",
+                        text=text,
+                        duration=info.duration,
+                        qa_result=qa_result,
+                        attempts=attempts,
+                        elapsed_seconds=total_elapsed,
+                        metrics=metrics,
+                    )
+
+            os.replace(tmp_path, block_path)
+            wav, sr = read_wav(block_path)
+            return BlockResult(
+                status="generated",
+                text=text,
+                wav=wav,
+                sample_rate=sr,
+                duration=info.duration,
+                qa_result=qa_result,
+                attempts=attempts,
+                elapsed_seconds=total_elapsed,
+                metrics=metrics,
+            )
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)

@@ -1,9 +1,18 @@
+import io
+import os
 from pathlib import Path
 
+import numpy as np
+import pytest
+import soundfile as sf
+
+from audio_qa import QAResult
 from tts_workflow import (
     build_srt_entries,
     build_voxcpm_payload,
+    generate_validated_block,
     parse_structured_shorts,
+    rejected_path_for,
     seconds_to_srt,
     split_text_blocks,
 )
@@ -91,3 +100,117 @@ def test_build_voxcpm_payload_preserves_quality_parameters():
         "denoise": False,
         "trim_silence_vad": False,
     }
+
+
+def _wav_bytes(duration_s=1.0, sr=16000):
+    samples = np.zeros(int(duration_s * sr), dtype=np.float32)
+    buf = io.BytesIO()
+    sf.write(buf, samples, sr, format="WAV")
+    return buf.getvalue()
+
+
+def _build_payload(text, seed=None):
+    return {"text": text, "seed": seed}
+
+
+class _StubQA:
+    """QA falso: devuelve los resultados de `outcomes` en orden, uno por intento."""
+
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    def validate(self, text, wav_path, duration):
+        self.calls.append((text, wav_path, duration))
+        return self.outcomes.pop(0)
+
+
+def test_generate_validated_block_reuses_existing_file(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+    with open(block_path, "wb") as f:
+        f.write(_wav_bytes(duration_s=0.5))
+
+    def fail_generate(payload):
+        raise AssertionError("no deberia generar si el bloque ya existe")
+
+    result = generate_validated_block("hola", block_path, _build_payload, fail_generate)
+
+    assert result.status == "reused"
+    assert result.sample_rate == 16000
+    assert result.duration == pytest.approx(0.5, abs=0.01)
+
+
+def test_generate_validated_block_generates_without_qa(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+    calls = []
+
+    def generate_fn(payload):
+        calls.append(payload)
+        return _wav_bytes(duration_s=0.3), {"inference_seconds": 1.2}
+
+    result = generate_validated_block("hola", block_path, _build_payload, generate_fn, qa=None)
+
+    assert result.status == "generated"
+    assert len(calls) == 1
+    assert os.path.exists(block_path)
+    assert not os.path.exists(block_path + ".tmp.wav")
+    assert result.metrics == {"inference_seconds": 1.2}
+
+
+def test_generate_validated_block_retries_with_new_seed_then_passes_qa(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+    seeds_used = []
+
+    def generate_fn(payload):
+        seeds_used.append(payload["seed"])
+        return _wav_bytes(duration_s=0.3), {}
+
+    qa = _StubQA(
+        [
+            QAResult(ok=False, reasons=("idioma inesperado",)),
+            QAResult(ok=True, reasons=()),
+        ]
+    )
+
+    result = generate_validated_block("hola", block_path, _build_payload, generate_fn, qa=qa, max_retries=1)
+
+    assert result.status == "generated"
+    assert result.attempts == 2
+    assert seeds_used[0] is None  # primer intento sin seed forzada
+    assert seeds_used[1] is not None  # reintento con seed distinta
+    assert os.path.exists(block_path)
+    assert not os.path.exists(rejected_path_for(block_path))
+
+
+def test_generate_validated_block_quarantines_after_exhausting_retries(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+
+    def generate_fn(payload):
+        return _wav_bytes(duration_s=0.3), {}
+
+    bad_result = QAResult(ok=False, reasons=("idioma inesperado",))
+    qa = _StubQA([bad_result, bad_result])
+
+    result = generate_validated_block("hola", block_path, _build_payload, generate_fn, qa=qa, max_retries=1)
+
+    assert result.status == "quarantined"
+    assert result.attempts == 2
+    assert not os.path.exists(block_path)
+    assert os.path.exists(rejected_path_for(block_path))
+    assert not os.path.exists(block_path + ".tmp.wav")
+
+
+def test_generate_validated_block_propagates_generate_fn_errors_without_retry(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+    calls = []
+
+    def failing_generate_fn(payload):
+        calls.append(payload)
+        raise RuntimeError("servidor caido")
+
+    with pytest.raises(RuntimeError, match="servidor caido"):
+        generate_validated_block("hola", block_path, _build_payload, failing_generate_fn, qa=None, max_retries=3)
+
+    assert len(calls) == 1  # errores de red no se reintentan, solo fallos de QA
+    assert not os.path.exists(block_path)
+    assert not os.path.exists(block_path + ".tmp.wav")
