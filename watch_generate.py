@@ -6,9 +6,10 @@ de su nombre (sin extension):
   - termina en " shorts" -> logica de generate_shorts.py
   - cualquier otro nombre -> se ignora
 
-Ejemplo: "cine script.txt" -> base "cine". Todo lo generado para esa base vive
-en WATCH_DIR/cine/ (audio final, srt, bloques intermedios y, para shorts, la
-subcarpeta con un wav por short).
+Cada .txt tiene su propia carpeta de salida, nombrada igual que el .txt.
+Ejemplo: "cine script.txt" -> WATCH_DIR/cine script/ (audio final, srt y
+bloques intermedios); "cine shorts.txt" -> WATCH_DIR/cine shorts/ (bloques,
+srt y la subcarpeta shorts/ con un wav por short).
 
 Requiere que voxcpm_server.py ya este corriendo (el modelo vive ahi, no aqui).
 """
@@ -65,7 +66,7 @@ def plan_outputs(txt_path, watch_dir):
         kind = None
         base = stem
 
-    base_dir = os.path.join(watch_dir, base)
+    base_dir = os.path.join(watch_dir, stem)
     blocks_dir = os.path.join(base_dir, "bloques")
 
     if kind == "script":
@@ -83,7 +84,7 @@ def plan_outputs(txt_path, watch_dir):
         )
 
     if kind == "shorts":
-        shorts_dir = os.path.join(base_dir, stem)
+        shorts_dir = os.path.join(base_dir, "shorts")
         srt_output = os.path.join(base_dir, f"{stem}_completo.srt")
         return GeneratePlan(
             kind=kind,
