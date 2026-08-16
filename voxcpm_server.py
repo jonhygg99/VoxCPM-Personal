@@ -242,8 +242,10 @@ def main():
 
     if args.optimize:
         # Con CUDA graphs el sync GPU->CPU por patch del stop-check rompe el
-        # pipelining; difiere la comprobacion en lotes de 8 (bit-exact, recorta).
-        os.environ.setdefault("VOXCPM_STOP_CHECK_BATCH", "8")
+        # pipelining; difiere la comprobacion en lotes (bit-exact, recorta).
+        # Barrrido en la RTX 3070 (2026-08-16): el optimo es 1-2 (7.57 s/bloque,
+        # +6.1% vs 8, todos bit-exact); 16 pierde ~10% por overshoot de patches.
+        os.environ.setdefault("VOXCPM_STOP_CHECK_BATCH", "2")
 
     service = VoxCPMService(model_id=args.model_id, optimize=args.optimize)
     VoxCPMRequestHandler.service = service
