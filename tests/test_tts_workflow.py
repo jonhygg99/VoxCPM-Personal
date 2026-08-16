@@ -8,6 +8,7 @@ import soundfile as sf
 
 from audio_qa import QAResult
 from tts_workflow import (
+    GenerationPipeline,
     build_srt_entries,
     build_voxcpm_payload,
     generate_validated_block,
@@ -198,6 +199,75 @@ def test_generate_validated_block_quarantines_after_exhausting_retries(tmp_path)
     assert not os.path.exists(block_path)
     assert os.path.exists(rejected_path_for(block_path))
     assert not os.path.exists(block_path + ".tmp.wav")
+
+
+def test_generate_validated_block_uses_prefetch_for_first_attempt(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+    calls = []
+
+    def generate_fn(payload):
+        calls.append(payload)
+        return _wav_bytes(duration_s=0.3), {"inference_seconds": 1.2}
+
+    def prefetch():
+        return _wav_bytes(duration_s=0.5), {"inference_seconds": 0.5, "prefetched": True}
+
+    result = generate_validated_block("hola", block_path, _build_payload, generate_fn, qa=None, prefetch=prefetch)
+
+    assert result.status == "generated"
+    assert len(calls) == 0  # el primer intento lo sirve el prefetch, sin generate_fn
+    assert result.metrics == {"inference_seconds": 0.5, "prefetched": True}
+
+
+def test_generate_validated_block_prefetch_retries_use_generate_fn_with_new_seed(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+    seeds_used = []
+
+    def generate_fn(payload):
+        seeds_used.append(payload["seed"])
+        return _wav_bytes(duration_s=0.3), {}
+
+    qa = _StubQA(
+        [
+            QAResult(ok=False, reasons=("idioma inesperado",)),
+            QAResult(ok=True, reasons=()),
+        ]
+    )
+
+    def prefetch():
+        return _wav_bytes(duration_s=0.3), {}
+
+    result = generate_validated_block(
+        "hola", block_path, _build_payload, generate_fn, qa=qa, max_retries=1, prefetch=prefetch
+    )
+
+    assert result.status == "generated"
+    assert result.attempts == 2
+    assert len(seeds_used) == 1  # solo el reintento toca generate_fn
+    assert seeds_used[0] is not None  # y con seed nueva
+
+
+def test_generation_pipeline_delivers_blocks_in_order(tmp_path):
+    items = [
+        (1, "bloque uno", str(tmp_path / "b1.wav")),
+        (2, "bloque dos", str(tmp_path / "b2.wav")),
+    ]
+    order = []
+
+    def build_payload(text, seed=None):
+        return {"text": text, "seed": seed}
+
+    def generate_fn(payload):
+        order.append(payload["text"])
+        return _wav_bytes(duration_s=0.3), {}
+
+    pipeline = GenerationPipeline(items, build_payload, generate_fn)
+
+    wav1, _ = pipeline.prefetch_callable(1)()
+    wav2, _ = pipeline.prefetch_callable(2)()
+
+    assert len(wav1) > 0 and len(wav2) > 0
+    assert order == ["bloque uno", "bloque dos"]  # generacion en orden
 
 
 def test_generate_validated_block_propagates_generate_fn_errors_without_retry(tmp_path):

@@ -34,6 +34,33 @@ Sobre el guion fijo `benchmarks/bench_script.txt` (8 bloques medidos + 2 warmup,
 | TF32 | Solo tocaría el decode fp32 del VAE (~1.5% del tiempo); no compensa perder bit-exactness | perfil `VOXCPM_PROFILE` |
 | `--optimize` SIN triton instalado | No compila nada ("torch.compile disabled - triton is not installed"): queda solo el warmup — minutos de arranque, ~1.5% más lento y cambia los numéricos. Con `triton-windows` instalado sí compila y gana 43% (ver arriba) | `bench_fase5_compile.json`, `bench_triton_compile.json` |
 
+## Pipeline QA/generación (cliente, 2026-08-16)
+
+Fuera del servidor: el flujo de generación con control de calidad (`generate_script.py`,
+`generate_shorts.py`, heredado por `watch_generate.py`) serializaba generar → validar
+(whisper en CPU) → siguiente bloque, dejando la **GPU ociosa durante el QA**.
+
+Medido en la RTX 3070 (faster-whisper `small`, int8, CPU, 10 bloques de `bench_script.txt`):
+
+| | Por bloque |
+|---|---|
+| QA (whisper CPU) | 4.20 s (rango 3.82–4.69) — ~58% extra de wall-clock |
+| Sin pipeline (generar + QA serial) | 12.71 s — 127.1 s total |
+| **Con pipeline** | **~8 s — 86.3 s total en el flujo watchdog completo** (incl. carga QA + concat) |
+
+**Resultado: ~30% menos de tiempo de sesión**, sin cambiar ningún WAV ni los veredictos
+del QA (10/10 OK en ambas configuraciones, 0 reintentos).
+
+Cómo funciona: `GenerationPipeline` (`tts_workflow.py`) pide al servidor el bloque
+siguiente (GPU) desde un hilo mientras el hilo principal valida el actual (QA en CPU).
+Como el QA (4.2 s) es más corto que una generación (~8 s), queda oculto detrás de la
+siguiente generación. Solo cubre el primer intento (seed None); los reintentos por QA se
+generan de forma síncrona con seed nueva (reintentos y cuarentena intactos), y si el
+worker falla por red los bloques restantes vuelven al modo síncrono reportando su propio
+error. Solo se activa con QA activo y bloques nuevos: con `--no-validate` o todo
+reutilizado no cambia nada. Verificado con la suite completa (118 tests, incl. 3 nuevos
+para el pipeline).
+
 ## Dónde se va el tiempo (perfil con `VOXCPM_PROFILE=1`)
 
 Por petición (primera petición, servidor fresco): **DiT/difusión ~64%** (10-12 pasos Euler × forward 2×batch por patch), pasos LM ~27%, feat_encoder ~5%, prefill ~4%, VAE decode ~1.5%, sync del stop-check ~0.1%.

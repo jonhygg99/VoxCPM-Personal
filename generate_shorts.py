@@ -6,6 +6,7 @@ import soundfile as sf
 
 from audio_qa import AudioQA, QAThresholds
 from tts_workflow import (
+    GenerationPipeline,
     build_srt_entries,
     build_voxcpm_payload,
     concatenate_wavs,
@@ -127,6 +128,20 @@ def run(
     def generate_fn(payload):
         return generate_wav_bytes_with_metrics(payload, server_url)
 
+    # Pipeline QA/generacion: el bloque siguiente se genera en un hilo mientras
+    # el QA valida el actual (whisper en CPU), ocultando el coste del QA detras
+    # de la generacion. Solo cubre el primer intento y los bloques nuevos.
+    to_generate = []
+    for short_idx, short_text in enumerate(shorts, start=1):
+        for block_idx, block in enumerate(split_text_blocks(short_text, max_chars), start=1):
+            block_path = block_path_for(short_idx, block_idx)
+            if not os.path.exists(block_path):
+                to_generate.append(((short_idx, block_idx), block, block_path))
+    pipeline = None
+    if qa is not None and to_generate:
+        pipeline = GenerationPipeline(to_generate, build_payload, generate_fn)
+        print(f"Pipeline QA/generacion activo: {len(to_generate)} bloques nuevos")
+
     srt_sections = []
     generated_count = 0
     reused_count = 0
@@ -171,6 +186,7 @@ def run(
                     generate_fn,
                     qa=qa,
                     max_retries=max_retries,
+                    prefetch=(pipeline.prefetch_callable((short_idx, block_idx)) if pipeline is not None else None),
                 )
             except Exception as e:
                 print(f"    ERROR: {e}")

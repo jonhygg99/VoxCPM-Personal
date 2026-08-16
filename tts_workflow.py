@@ -1,6 +1,7 @@
 import os
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Iterable, Optional
@@ -252,6 +253,66 @@ def rejected_path_for(block_path):
     return f"{root}.rejected.wav"
 
 
+class GenerationPipeline:
+    """Prefetch de generacion con QA solapado (pipelining QA/generacion).
+
+    El worker pide al servidor el bloque siguiente (GPU) desde un hilo mientras
+    el hilo principal valida el actual (QA en CPU). Como la validacion
+    (faster-whisper en CPU, ~4s) es mas corta que una generacion (~8s), el QA
+    queda oculto detras de la generacion siguiente: el wall-clock por bloque
+    pasa de generacion+QA a solo generacion, sin cambiar ningun audio ni los
+    veredictos del QA.
+
+    Solo cubre el primer intento (seed None); los reintentos por QA se generan
+    de forma sincrona, igual que sin pipeline. Si el worker falla por red, los
+    bloques restantes se generan de forma sincrona y cada uno reporta su propio
+    error, conservando el comportamiento original.
+
+    `items` es una lista ordenada de (index, text, block_path) con los bloques
+    que necesitan generacion (los reutilizables no deben incluirse). `index`
+    puede ser cualquier clave hashable (int en generate_script, tupla en
+    generate_shorts).
+    """
+
+    def __init__(self, items, build_payload, generate_fn):
+        self._items = list(items)
+        self._build_payload = build_payload
+        self._generate_fn = generate_fn
+        self._ready = {}
+        self._cond = threading.Condition()
+        self._worker_error = None
+        self._thread = threading.Thread(target=self._run, daemon=True, name="voxcpm-prefetch")
+        self._thread.start()
+
+    def _run(self):
+        for index, text, _path in self._items:
+            try:
+                wav_bytes, metrics = self._generate_fn(self._build_payload(text))
+            except Exception as exc:
+                with self._cond:
+                    self._worker_error = exc
+                    self._cond.notify_all()
+                return
+            with self._cond:
+                self._ready[index] = (wav_bytes, metrics)
+                self._cond.notify_all()
+
+    def prefetch_callable(self, index):
+        """Callable que entrega (wav_bytes, metrics) del primer intento de `index`."""
+
+        def fetch():
+            with self._cond:
+                while index not in self._ready and self._worker_error is None and self._thread.is_alive():
+                    self._cond.wait()
+                if index in self._ready:
+                    return self._ready.pop(index)
+                if self._worker_error is not None:
+                    raise self._worker_error
+            raise KeyError(f"El bloque {index} no estaba en el pipeline de generacion")
+
+        return fetch
+
+
 def generate_validated_block(
     text,
     block_path,
@@ -260,8 +321,14 @@ def generate_validated_block(
     qa=None,
     max_retries=0,
     log=print,
+    prefetch=None,
 ):
     """Genera el audio de un bloque, reutilizando `block_path` si ya existe.
+
+    `prefetch` (opcional) es un callable que entrega el primer intento ya
+    generado por el pipeline (QA solapado); si se omite, el primer intento se
+    genera aqui con `generate_fn`. Los reintentos por QA siempre se generan de
+    forma sincrona.
 
     Si `qa` se provee (cualquier objeto con `.validate(text, wav_path,
     duration) -> resultado con .ok y .reasons`), valida cada intento antes de
@@ -289,10 +356,13 @@ def generate_validated_block(
         while True:
             attempts += 1
             seed = random.randint(0, 2**31 - 1) if attempts > 1 else None
-            payload = build_payload(text, seed=seed)
 
             request_start = time.perf_counter()
-            wav_bytes, metrics = generate_fn(payload)
+            if attempts == 1 and prefetch is not None:
+                wav_bytes, metrics = prefetch()
+            else:
+                payload = build_payload(text, seed=seed)
+                wav_bytes, metrics = generate_fn(payload)
             total_elapsed += time.perf_counter() - request_start
             write_wav_bytes(tmp_path, wav_bytes)
             info = get_audio_info(tmp_path)
