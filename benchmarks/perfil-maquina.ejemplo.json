@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "origen": "barrido",
+  "fecha": "2026-08-16T00:00:00+00:00",
+  "maquina": {
+    "hostname": "MI-PC-EJEMPLO",
+    "so": "Windows-11-...",
+    "gpu": "NVIDIA GeForce RTX 3070",
+    "vram_gb": 8.0,
+    "torch": "2.11.0+cu128",
+    "triton": "3.5.0"
+  },
+  "servidor": {
+    "optimize": true,
+    "stop_check_batch": 2
+  },
+  "qa": {
+    "model": "small",
+    "device": "cpu",
+    "candidatos": [
+      {"model": "small", "device": "cpu", "carga_s": 1.2, "check_s": 4.2, "total_s": 5.4, "pasa_qa": true},
+      {"model": "base", "device": "cpu", "carga_s": 1.0, "check_s": 3.1, "total_s": 4.1, "pasa_qa": true}
+    ]
+  },
+  "benchmark": {
+    "bloques": 8,
+    "warmup": 2,
+    "seed": 1234,
+    "guion": "benchmarks/bench_script.txt"
+  },
+  "metricas": {
+    "optimize=false batch=1": {"median_ratio": 2.06, "avg_inference_seconds": 15.3, "peak_reserved_mb": 5782},
+    "optimize=true batch=1": {"median_ratio": 1.1, "avg_inference_seconds": 8.1, "peak_reserved_mb": 6358},
+    "optimize=true batch=2": {"median_ratio": 1.04, "avg_inference_seconds": 7.57, "peak_reserved_mb": 6360}
+  }
+}

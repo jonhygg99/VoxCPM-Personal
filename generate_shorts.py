@@ -4,6 +4,7 @@ import traceback
 
 import soundfile as sf
 
+import perfil_maquina
 from audio_qa import AudioQA, QAThresholds
 from tts_workflow import (
     GenerationPipeline,
@@ -40,8 +41,8 @@ METRIC_KEYS = ("cache_seconds", "inference_seconds", "wav_write_seconds", "queue
 # Control de calidad de audio (ver audio_qa.py): detecta bloques donde el TTS
 # alucino -- p.ej. hablo en otro idioma o repitio/corto el audio.
 VALIDATE_AUDIO = True
-QA_MODEL = "small"
-QA_DEVICE = "cpu"  # la GPU ya la ocupa voxcpm_server.py
+QA_MODEL = perfil_maquina.cargar()["qa"]["model"]
+QA_DEVICE = perfil_maquina.cargar()["qa"]["device"]  # la GPU ya la ocupa voxcpm_server.py
 MAX_RETRIES = 2  # reintentos con otra seed antes de poner el bloque en cuarentena
 
 # ----------------------

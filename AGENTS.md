@@ -80,6 +80,7 @@ VoxCPM1.5 supports only **continuation cloning** (requires `prompt_wav_path` + `
 - Tests stub out `voxcpm.core.VoxCPM` to avoid loading torch/model weights — keep CLI tests fast by maintaining that pattern.
 - `optimize=True` calls `torch.compile` and runs a warmup inference on init; set `optimize=False` when debugging.
 - Device selection: pass `device=None` (auto) or explicit `"cuda"`, `"mps"`, `"cpu"`.
+- Performance defaults come from the local machine profile: `perfil_maquina.py` reads `benchmarks/perfil-maquina.json` (gitignored; template `perfil-maquina.ejemplo.json`) and the project scripts use it for `--optimize`, `VOXCPM_STOP_CHECK_BATCH`, QA model/device and benchmark blocks/warmup. Regenerate with `python scripts/benchmark_perfil.py` or the `/benchmark-perfil` skill.
 
 ## graphify
 

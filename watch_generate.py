@@ -24,6 +24,7 @@ from typing import Optional
 
 import generate_script
 import generate_shorts
+import perfil_maquina
 from audio_qa import AudioQA
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server
 
@@ -182,9 +183,15 @@ def main():
         action="store_true",
         help="Desactiva el chequeo de calidad de audio (idioma/similitud/duracion, ver audio_qa.py).",
     )
-    parser.add_argument("--qa-model", default="small", help="Modelo faster-whisper para el chequeo de calidad.")
     parser.add_argument(
-        "--qa-device", default="cpu", help="Device para el chequeo de calidad (la GPU la usa el server)."
+        "--qa-model",
+        default=perfil_maquina.cargar()["qa"]["model"],
+        help="Modelo faster-whisper para el chequeo de calidad.",
+    )
+    parser.add_argument(
+        "--qa-device",
+        default=perfil_maquina.cargar()["qa"]["device"],
+        help="Device para el chequeo de calidad (la GPU la usa el server).",
     )
     args = parser.parse_args()
 

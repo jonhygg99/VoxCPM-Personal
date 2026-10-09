@@ -22,11 +22,21 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(PROJECT_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
+# La raiz tambien: los modulos hermanos (perfil_maquina) deben importar aunque
+# el server se lance con exec() desde otro directorio (voxcpm_wrapper.py).
+if PROJECT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_DIR)
+
+import perfil_maquina
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_MODEL_ID = "openbmb/VoxCPM2"
+
+# Ajustes ganadores en ESTE ordenador (benchmarks/perfil-maquina.json, lo escribe
+# scripts/benchmark_perfil.py). Fallback: lo medido en la RTX 3070.
+PERFIL = perfil_maquina.cargar()
 
 
 # Nota de performance: se midieron y DESCARTARON estas palancas opt-in
@@ -232,11 +242,13 @@ def main():
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument(
         "--optimize",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=PERFIL["servidor"]["optimize"],
         help="torch.compile + CUDA graphs (requiere triton; en Windows: pip install triton-windows). "
         "Medido en la RTX 3070: 15.3s -> 8.8s por bloque (43%% mas rapido, ratio 1.24x). El arranque "
         "tarda varios minutos compilando. No es bit-exact respecto a eager (equivale a cambiar de "
-        "seed; con la misma seed entre arranques compilados SI es reproducible).",
+        "seed; con la misma seed entre arranques compilados SI es reproducible). "
+        "--no-optimize fuerza eager.",
     )
     args = parser.parse_args()
 
@@ -245,7 +257,7 @@ def main():
         # pipelining; difiere la comprobacion en lotes (bit-exact, recorta).
         # Barrrido en la RTX 3070 (2026-08-16): el optimo es 1-2 (7.57 s/bloque,
         # +6.1% vs 8, todos bit-exact); 16 pierde ~10% por overshoot de patches.
-        os.environ.setdefault("VOXCPM_STOP_CHECK_BATCH", "2")
+        os.environ.setdefault("VOXCPM_STOP_CHECK_BATCH", str(PERFIL["servidor"]["stop_check_batch"]))
 
     service = VoxCPMService(model_id=args.model_id, optimize=args.optimize)
     VoxCPMRequestHandler.service = service

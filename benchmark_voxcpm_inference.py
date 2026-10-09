@@ -8,6 +8,10 @@ from pathlib import Path
 from tts_workflow import build_voxcpm_payload, read_paragraph_blocks
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server, generate_wav_bytes_with_metrics
 
+import perfil_maquina
+
+PERFIL = perfil_maquina.cargar()
+
 SCRIPT_FILE = r"C:\Users\jonhy\Desktop\script.txt"
 REFERENCE_WAV = r"C:\Users\jonhy\Desktop\audio-40s.wav"
 MODEL_ID = "openbmb/VoxCPM2"
@@ -16,7 +20,8 @@ MAX_CHARS = 200
 CFG_VALUE = 2.0
 INFERENCE_TIMESTEPS = 12
 NORMALIZE = False
-DEFAULT_BLOCK_LIMIT = 8
+DEFAULT_BLOCK_LIMIT = PERFIL["benchmark"]["bloques"]
+DEFAULT_WARMUP_COUNT = PERFIL["benchmark"]["warmup"]
 DEFAULT_AUDIO_DIFF_THRESHOLD = 0.30
 
 PROMPT_TEXT = (
@@ -281,7 +286,7 @@ def main():
     parser.add_argument("--limit", type=int, default=DEFAULT_BLOCK_LIMIT)
     parser.add_argument("--output-json", default="")
     parser.add_argument("--health-timeout", type=float, default=10.0)
-    parser.add_argument("--warmup-count", type=int, default=0)
+    parser.add_argument("--warmup-count", type=int, default=DEFAULT_WARMUP_COUNT)
     parser.add_argument("--audio-diff-threshold", type=float, default=DEFAULT_AUDIO_DIFF_THRESHOLD)
     parser.add_argument(
         "--seed",
