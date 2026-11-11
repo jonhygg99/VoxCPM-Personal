@@ -43,6 +43,11 @@ INSTANCE_LOCK_PORT = 8766
 
 SCRIPT_SUFFIX = " script"
 SHORTS_SUFFIX = " shorts"
+# El vault usa "<iniciales>-<carpeta>-script.txt" (guion); el formato viejo era
+# "canal script.txt" (espacio). Se aceptan los tres separadores para que el
+# nombre base quede limpio. "transcript" NO matchea: se exige el separador.
+SCRIPT_SUFFIXES = (SCRIPT_SUFFIX, "-script", "_script")
+SHORTS_SUFFIXES = (SHORTS_SUFFIX, "-shorts", "_shorts")
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,20 @@ class GeneratePlan:
     shorts_dir: Optional[str] = None  # solo "shorts"
 
 
+def _base_sin_sufijo(stem, suffixes):
+    """Devuelve el stem sin el sufijo reconocido (si lo hay) y sin separadores.
+
+    Solo afecta al campo `base` (nombre logico); las rutas de salida siguen
+    colgando del stem completo para no colisionar entre "cine script" y
+    "cine-shorts".
+    """
+    stem_lower = stem.lower()
+    for suf in suffixes:
+        if stem_lower.endswith(suf):
+            return stem[: -len(suf)].strip(" -_\t")
+    return stem
+
+
 def plan_outputs(txt_path, watch_dir):
     """Calcula rutas de salida para un .txt segun las convenciones de nombres.
 
@@ -66,16 +85,13 @@ def plan_outputs(txt_path, watch_dir):
     stem = os.path.splitext(os.path.basename(txt_path))[0]
     stem_lower = stem.lower()
 
-    if stem_lower.endswith(SHORTS_SUFFIX):
+    if any(stem_lower.endswith(suf) for suf in SHORTS_SUFFIXES):
         kind = "shorts"
-        base = stem[: -len(SHORTS_SUFFIX)].strip()
+        base = _base_sin_sufijo(stem, SHORTS_SUFFIXES)
     else:
         # Sin reglas de naming: todo .txt es guion largo, con o sin " script".
         kind = "script"
-        if stem_lower.endswith(SCRIPT_SUFFIX):
-            base = stem[: -len(SCRIPT_SUFFIX)].strip()
-        else:
-            base = stem
+        base = _base_sin_sufijo(stem, SCRIPT_SUFFIXES)
 
     base_dir = os.path.join(watch_dir, stem)
     blocks_dir = os.path.join(base_dir, "bloques")

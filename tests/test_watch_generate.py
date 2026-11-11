@@ -64,6 +64,35 @@ def test_plan_outputs_handles_multi_word_base():
     assert plan.base_dir == os.path.join(watch_dir, "el escandalo de la semana script")
 
 
+def test_plan_outputs_trims_dash_and_underscore_suffixes_from_base():
+    """El vault nombra "<iniciales>-<carpeta>-script.txt"; el base debe quedar limpio."""
+    watch_dir = r"D:\Obsidian Vaults\Chismes MX\Generate"
+
+    dash = watch_generate.plan_outputs(os.path.join(watch_dir, "MX-cine-script.txt"), watch_dir)
+    assert dash.kind == "script"
+    assert dash.base == "MX-cine"
+    assert dash.base_dir == os.path.join(watch_dir, "MX-cine-script")
+
+    underscore = watch_generate.plan_outputs(os.path.join(watch_dir, "MX_cine_script.txt"), watch_dir)
+    assert underscore.kind == "script"
+    assert underscore.base == "MX_cine"
+    assert underscore.base_dir == os.path.join(watch_dir, "MX_cine_script")
+
+    shorts = watch_generate.plan_outputs(os.path.join(watch_dir, "MX-cine-shorts.txt"), watch_dir)
+    assert shorts.kind == "shorts"
+    assert shorts.base == "MX-cine"
+    assert shorts.shorts_dir == os.path.join(watch_dir, "MX-cine-shorts", "shorts")
+
+
+def test_plan_outputs_does_not_trim_transcript():
+    watch_dir = r"D:\Obsidian Vaults\Chismes MX\Generate"
+
+    plan = watch_generate.plan_outputs(os.path.join(watch_dir, "canal transcript.txt"), watch_dir)
+
+    assert plan.kind == "script"
+    assert plan.base == "canal transcript"
+
+
 def test_process_file_skips_when_done_marker_exists(tmp_path, monkeypatch, capsys):
     watch_dir = tmp_path
     txt_path = watch_dir / "cine script.txt"
