@@ -253,6 +253,16 @@ def rejected_path_for(block_path):
     return f"{root}.rejected.wav"
 
 
+def tmp_path_for(block_path):
+    """Temporal unico por proceso.
+
+    Con un nombre fijo, dos watchers sobre la misma carpeta escriben el mismo
+    .tmp: uno valida el audio a medias del otro y el QA lo manda a cuarentena
+    aunque el audio sea bueno (caso real que costo 25 bloques).
+    """
+    return f"{block_path}.{os.getpid()}.tmp.wav"
+
+
 class GenerationPipeline:
     """Prefetch de generacion con QA solapado (pipelining QA/generacion).
 
@@ -346,7 +356,7 @@ def generate_validated_block(
         wav, sr = read_wav(block_path)
         return BlockResult(status="reused", text=text, wav=wav, sample_rate=sr, duration=info.duration)
 
-    tmp_path = block_path + ".tmp.wav"
+    tmp_path = tmp_path_for(block_path)
     attempts = 0
     total_elapsed = 0.0
     qa_result = None

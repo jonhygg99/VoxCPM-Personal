@@ -16,12 +16,27 @@ from tts_workflow import (
     write_qa_report,
     write_srt,
 )
-from voices.david import PROMPT_TEXT
+from voices.benjamin import PROMPT_TEXT as BENJAMIN_PROMPT
+from voices.david import PROMPT_TEXT as DAVID_PROMPT
+from voices.jax import PROMPT_TEXT as JAX_PROMPT
+from voices.juan_sanchez import PROMPT_TEXT as JUAN_SANCHEZ_PROMPT
+from voices.leo_antonio import PROMPT_TEXT as LEO_ANTONIO_PROMPT
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server, generate_wav_bytes_with_metrics
+
+# --- Voces disponibles (prompt + wav de referencia) ---
+VOICE_PRESETS = {
+    "david": {"wav": r"voices\david.wav", "prompt": DAVID_PROMPT},
+    "benjamin": {"wav": r"voices\benjamin.wav", "prompt": BENJAMIN_PROMPT},
+    "juan_sanchez": {"wav": r"voices\juan_sanchez.wav", "prompt": JUAN_SANCHEZ_PROMPT},
+    "jax": {"wav": r"voices\jax.wav", "prompt": JAX_PROMPT},
+    "leo_antonio": {"wav": r"voices\leo_antonio.wav", "prompt": LEO_ANTONIO_PROMPT},
+}
+DEFAULT_VOICE = "david"
 
 # --- Configura aqui ---
 SCRIPT_FILE = r"C:\Users\jonhy\Desktop\script.txt"
-REFERENCE_WAV = r"voices\david.wav"
+REFERENCE_WAV = VOICE_PRESETS[DEFAULT_VOICE]["wav"]
+PROMPT_TEXT = VOICE_PRESETS[DEFAULT_VOICE]["prompt"]
 OUTPUT_DIR = r"C:\Users\jonhy\Desktop\bloques"
 FINAL_OUTPUT = r"C:\Users\jonhy\Desktop\script_completo.wav"
 SRT_OUTPUT = r"C:\Users\jonhy\Desktop\script_completo.srt"

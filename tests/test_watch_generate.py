@@ -1,4 +1,5 @@
 import os
+import socket
 import time
 
 import watch_generate
@@ -42,13 +43,13 @@ def test_plan_outputs_classifies_shorts_file():
     assert plan.done_marker == plan.srt_output
 
 
-def test_plan_outputs_ignores_unrecognized_suffix():
+def test_plan_outputs_treats_any_other_name_as_script():
     watch_dir = r"D:\Obsidian Vaults\Chismes MX\Generate"
     txt_path = os.path.join(watch_dir, "notas.txt")
 
     plan = watch_generate.plan_outputs(txt_path, watch_dir)
 
-    assert plan.kind is None
+    assert plan.kind == "script"
     assert plan.base == "notas"
 
 
@@ -141,9 +142,8 @@ def test_process_file_calls_generate_shorts_run_with_planned_paths(tmp_path, mon
     assert call["srt_output"] == os.path.join(str(watch_dir), "cine shorts", "cine shorts_completo.srt")
 
 
-def test_is_done_for_script_checks_final_wav():
-    watch_dir = r"D:\Obsidian Vaults\Chismes MX\Generate"
-    plan = watch_generate.plan_outputs(os.path.join(watch_dir, "cine script.txt"), watch_dir)
+def test_is_done_for_script_checks_final_wav(tmp_path):
+    plan = watch_generate.plan_outputs(str(tmp_path / "cine script.txt"), str(tmp_path))
 
     assert watch_generate.is_done(plan) is False
 
@@ -171,7 +171,56 @@ def test_is_done_for_shorts_true_when_wav_present(tmp_path):
     shorts_dir.mkdir(parents=True)
     (shorts_dir / "short_1.wav").write_bytes(b"RIFF")
 
-    assert watch_generate.is_done(plan) is True
+    assert watch_generate.is_done(plan) is False
+
+
+def test_is_done_for_shorts_requires_srt_and_every_short(tmp_path):
+    """Un wav suelto no cuenta: la corrida pudo cortarse a mitad (bug real)."""
+    watch_dir = tmp_path
+    txt_path = watch_dir / "cine shorts.txt"
+    txt_path.write_text(
+        "### SHORT 1\nScript:\nUno\n\n---\n### SHORT 2\nScript:\nDos\n\n---\n"
+        "### SHORT 3\nScript:\nTres\n",
+        encoding="utf-8",
+    )
+    plan = watch_generate.plan_outputs(str(txt_path), str(watch_dir))
+
+    base_dir = watch_dir / "cine shorts"
+    shorts_dir = base_dir / "shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "short_1.wav").write_bytes(b"RIFF")
+
+    # Sin SRT: la corrida no llego al final -> hay que reintentar.
+    assert watch_generate.is_done(plan, str(txt_path)) is False
+
+    # SRT no vacio, pero el txt declara 3 shorts y solo hay 1 wav.
+    (base_dir / "cine shorts_completo.srt").write_text("#Short 1\n", encoding="utf-8")
+    assert watch_generate.is_done(plan, str(txt_path)) is False
+
+    # Con los tres wav, ya esta completo.
+    for idx in (2, 3):
+        (shorts_dir / f"short_{idx}.wav").write_bytes(b"RIFF")
+    assert watch_generate.is_done(plan, str(txt_path)) is True
+
+
+def test_process_file_retries_shorts_after_interrupted_run(tmp_path, monkeypatch):
+    """Regresion del bug: short_1.wav sin SRT (corrida cortada) debe reintentarse."""
+    watch_dir = tmp_path
+    txt_path = watch_dir / "cine shorts.txt"
+    txt_path.write_text("hola", encoding="utf-8")
+    _backdate(txt_path)
+
+    shorts_dir = watch_dir / "cine shorts" / "shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "short_1.wav").write_bytes(b"RIFF")
+
+    calls = []
+
+    monkeypatch.setattr(watch_generate.generate_shorts, "run", lambda **kw: calls.append(kw))
+
+    watch_generate.process_file(str(txt_path), str(watch_dir), "http://127.0.0.1:8765")
+
+    assert len(calls) == 1
 
 
 def test_process_file_regenerates_shorts_with_empty_srt_marker(tmp_path, monkeypatch):
@@ -221,3 +270,24 @@ def test_scan_once_processes_script_and_shorts_of_same_channel_separately(tmp_pa
     assert script_calls[0]["blocks_dir"] == os.path.join(str(watch_dir), "cine script", "bloques")
     assert shorts_calls[0]["bloques_dir"] == os.path.join(str(watch_dir), "cine shorts", "bloques")
     assert script_calls[0]["blocks_dir"] != shorts_calls[0]["bloques_dir"]
+
+def test_claim_instance_lock_is_exclusive(monkeypatch):
+    """Un segundo watcher en la misma maquina no debe arrancar."""
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    monkeypatch.setattr(watch_generate, "INSTANCE_LOCK_PORT", port)
+
+    first = watch_generate._claim_instance_lock()
+    try:
+        assert first is not None
+        assert watch_generate._claim_instance_lock() is None
+    finally:
+        first.close()
+
+    again = watch_generate._claim_instance_lock()
+    try:
+        assert again is not None
+    finally:
+        again.close()

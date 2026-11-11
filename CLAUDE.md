@@ -80,3 +80,7 @@ VoxCPM1.5 supports only **continuation cloning** (requires `prompt_wav_path` + `
 - Tests stub out `voxcpm.core.VoxCPM` to avoid loading torch/model weights — keep CLI tests fast by maintaining that pattern.
 - `optimize=True` calls `torch.compile` and runs a warmup inference on init; set `optimize=False` when debugging.
 - Device selection: pass `device=None` (auto) or explicit `"cuda"`, `"mps"`, `"cpu"`.
+
+## File search (fff)
+
+For any file search or grep in this repo, use the fff MCP tools (`fffind`, `ffgrep`) instead of the default search tools.

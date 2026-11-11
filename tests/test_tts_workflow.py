@@ -16,6 +16,7 @@ from tts_workflow import (
     rejected_path_for,
     seconds_to_srt,
     split_text_blocks,
+    tmp_path_for,
 )
 
 
@@ -154,7 +155,7 @@ def test_generate_validated_block_generates_without_qa(tmp_path):
     assert result.status == "generated"
     assert len(calls) == 1
     assert os.path.exists(block_path)
-    assert not os.path.exists(block_path + ".tmp.wav")
+    assert not os.path.exists(tmp_path_for(block_path))
     assert result.metrics == {"inference_seconds": 1.2}
 
 
@@ -198,7 +199,7 @@ def test_generate_validated_block_quarantines_after_exhausting_retries(tmp_path)
     assert result.attempts == 2
     assert not os.path.exists(block_path)
     assert os.path.exists(rejected_path_for(block_path))
-    assert not os.path.exists(block_path + ".tmp.wav")
+    assert not os.path.exists(tmp_path_for(block_path))
 
 
 def test_generate_validated_block_uses_prefetch_for_first_attempt(tmp_path):
@@ -283,4 +284,4 @@ def test_generate_validated_block_propagates_generate_fn_errors_without_retry(tm
 
     assert len(calls) == 1  # errores de red no se reintentan, solo fallos de QA
     assert not os.path.exists(block_path)
-    assert not os.path.exists(block_path + ".tmp.wav")
+    assert not os.path.exists(tmp_path_for(block_path))

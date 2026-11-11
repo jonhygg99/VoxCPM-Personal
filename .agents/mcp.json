@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fff": {
+      "command": "fff-mcp",
+      "args": []
+    }
+  }
+}
