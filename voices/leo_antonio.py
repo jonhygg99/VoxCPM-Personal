@@ -1,4 +1,4 @@
-"""Transcript of voices/leo_antonio.wav, used as the VoxCPM prompt text for this voice."""
+"""Transcript of voices/pt/leo_antonio.wav, used as the VoxCPM prompt text for this voice."""
 
 PROMPT_TEXT = (
     "Hoje vamos ler a tabuinha sobre a revolta e responder a uma pergunta incômoda. "

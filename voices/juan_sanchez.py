@@ -1,4 +1,4 @@
-"""Transcript of voices/juan_sanchez.wav, used as the VoxCPM prompt text for this voice."""
+"""Transcript of voices/es/juan_sanchez.wav, used as the VoxCPM prompt text for this voice."""
 
 PROMPT_TEXT = (
     "En el British Museum, hay una tablilla de arcilla que empieza con una frase extraña. "

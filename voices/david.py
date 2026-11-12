@@ -1,4 +1,4 @@
-"""Transcript of voices/david.wav, used as the VoxCPM prompt text for this voice."""
+"""Transcript of voices/es/david.wav, used as the VoxCPM prompt text for this voice."""
 
 PROMPT_TEXT = (
     "Fíjate nada más lo que acaba de pasar... porque esto que les voy a contar hoy no es un chisme cualquiera "

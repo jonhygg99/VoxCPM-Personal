@@ -1,4 +1,4 @@
-"""Transcript of voices/benjamin.wav, used as the VoxCPM prompt text for this voice."""
+"""Transcript of voices/es/benjamin.wav, used as the VoxCPM prompt text for this voice."""
 
 PROMPT_TEXT = (
     "La medicina mató más hombres en la frontera americana que todas las balas disparadas en "

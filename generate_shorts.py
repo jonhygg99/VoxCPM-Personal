@@ -20,17 +20,25 @@ from tts_workflow import (
 from voices.benjamin import PROMPT_TEXT as BENJAMIN_PROMPT
 from voices.david import PROMPT_TEXT as DAVID_PROMPT
 from voices.jax import PROMPT_TEXT as JAX_PROMPT
+from voices.jax_bold import PROMPT_TEXT as JAX_BOLD_PROMPT
+from voices.joaquin import PROMPT_TEXT as JOAQUIN_PROMPT
 from voices.juan_sanchez import PROMPT_TEXT as JUAN_SANCHEZ_PROMPT
 from voices.leo_antonio import PROMPT_TEXT as LEO_ANTONIO_PROMPT
+from voices.leo_antonio_g2 import PROMPT_TEXT as LEO_ANTONIO_G2_PROMPT
+from voices.leo_antonio_g2_calma import PROMPT_TEXT as LEO_ANTONIO_G2_CALMA_PROMPT
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server, generate_wav_bytes_with_metrics
 
-# --- Voces disponibles (prompt + wav de referencia) ---
+# --- Voces disponibles (prompt + wav de referencia), audio separado por idioma en voices\<es|en|pt>\ ---
 VOICE_PRESETS = {
-    "david": {"wav": r"voices\david.wav", "prompt": DAVID_PROMPT},
-    "benjamin": {"wav": r"voices\benjamin.wav", "prompt": BENJAMIN_PROMPT},
-    "juan_sanchez": {"wav": r"voices\juan_sanchez.wav", "prompt": JUAN_SANCHEZ_PROMPT},
-    "jax": {"wav": r"voices\jax.wav", "prompt": JAX_PROMPT},
-    "leo_antonio": {"wav": r"voices\leo_antonio.wav", "prompt": LEO_ANTONIO_PROMPT},
+    "david": {"wav": r"voices\es\david.wav", "prompt": DAVID_PROMPT},
+    "benjamin": {"wav": r"voices\es\benjamin.wav", "prompt": BENJAMIN_PROMPT},
+    "juan_sanchez": {"wav": r"voices\es\juan_sanchez.wav", "prompt": JUAN_SANCHEZ_PROMPT},
+    "joaquin": {"wav": r"voices\es\joaquin.wav", "prompt": JOAQUIN_PROMPT},
+    "jax": {"wav": r"voices\en\jax.wav", "prompt": JAX_PROMPT},
+    "jax_bold": {"wav": r"voices\en\jax_bold.wav", "prompt": JAX_BOLD_PROMPT},
+    "leo_antonio": {"wav": r"voices\pt\leo_antonio.wav", "prompt": LEO_ANTONIO_PROMPT},
+    "leo_antonio_g2": {"wav": r"voices\pt\leo_antonio_g2.wav", "prompt": LEO_ANTONIO_G2_PROMPT},
+    "leo_antonio_g2_calma": {"wav": r"voices\pt\leo_antonio_g2_calma.wav", "prompt": LEO_ANTONIO_G2_CALMA_PROMPT},
 }
 DEFAULT_VOICE = "david"
 

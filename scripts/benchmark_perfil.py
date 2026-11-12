@@ -39,7 +39,7 @@ from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server  #
 
 PERFIL_PATH = RAIZ / "benchmarks" / "perfil-maquina.json"
 SCRIPT_FILE = RAIZ / "benchmarks" / "bench_script.txt"
-QA_WAV = RAIZ / "voices" / "david.wav"
+QA_WAV = RAIZ / "voices" / "es" / "david.wav"
 QA_MODELOS = ["small", "base", "medium"]
 SERVER_TIMEOUT = 600.0
 

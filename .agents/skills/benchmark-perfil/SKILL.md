@@ -47,7 +47,7 @@ nunca toca timesteps/CFG.
    fresco, mide `benchmarks/bench_script.txt` (8 bloques + 2 warmup, seed 1234)
    y guarda `median_ratio`, `avg_inference_seconds` y `peak_reserved_mb`.
 4. **Barrido de QA** — carga `small`/`base`/`medium` de faster-whisper en CPU y
-   los cronometra sobre `voices/david.wav`; gana el mas rapido que SIGUE pasando
+   los cronometra sobre `voices/es/david.wav`; gana el mas rapido que SIGUE pasando
    sus propios umbrales (`AudioQA.validate`, ver `audio_qa.py`). Un modelo mas
    rapido que no pasaria el QA se descarta.
 5. **Guardar** — escribe `benchmarks/perfil-maquina.json` con `maquina`
