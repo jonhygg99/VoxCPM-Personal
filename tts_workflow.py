@@ -84,9 +84,14 @@ def _parse_shorts_by_script_sections(content):
         section = section.strip()
         if not section:
             continue
-        match = re.search(r"^Script:\s*(.+)", section, re.MULTILINE)
+        # 12/11/2026: el guion puede venir en varios parrafos; sin DOTALL el
+        # parseo cortaba en la primera linea fisica y el audio salia truncado
+        # (vip: 6.4s de un guion de 44s). Se toma hasta la metadato o el fin.
+        match = re.search(
+            r"^Script:\s*(.+?)(?=^(?:Empuja a:|Titulo:|Título:|Descripcion:|Descripción:)\s*|\Z)",
+            section, re.MULTILINE | re.DOTALL)
         if match:
-            text = match.group(1).strip()
+            text = " ".join(match.group(1).split())
             if text:
                 shorts.append(text)
 
