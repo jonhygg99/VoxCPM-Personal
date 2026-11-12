@@ -22,6 +22,7 @@ from voices.jax import PROMPT_TEXT as JAX_PROMPT
 from voices.jax_bold import PROMPT_TEXT as JAX_BOLD_PROMPT
 from voices.joaquin import PROMPT_TEXT as JOAQUIN_PROMPT
 from voices.juan_sanchez import PROMPT_TEXT as JUAN_SANCHEZ_PROMPT
+from voices.juan_sanchez_calm import PROMPT_TEXT as JUAN_SANCHEZ_CALM_PROMPT
 from voices.leo_antonio import PROMPT_TEXT as LEO_ANTONIO_PROMPT
 from voices.leo_antonio_g2 import PROMPT_TEXT as LEO_ANTONIO_G2_PROMPT
 from voices.leo_antonio_g2_calma import PROMPT_TEXT as LEO_ANTONIO_G2_CALMA_PROMPT
@@ -32,6 +33,7 @@ VOICE_PRESETS = {
     "david": {"wav": r"voices\es\david.wav", "prompt": DAVID_PROMPT},
     "benjamin": {"wav": r"voices\es\benjamin.wav", "prompt": BENJAMIN_PROMPT},
     "juan_sanchez": {"wav": r"voices\es\juan_sanchez.wav", "prompt": JUAN_SANCHEZ_PROMPT},
+    "juan_sanchez_calm": {"wav": r"voices\es\juan_sanchez_calm.wav", "prompt": JUAN_SANCHEZ_CALM_PROMPT},
     "joaquin": {"wav": r"voices\es\joaquin.wav", "prompt": JOAQUIN_PROMPT},
     "jax": {"wav": r"voices\en\jax.wav", "prompt": JAX_PROMPT},
     "jax_bold": {"wav": r"voices\en\jax_bold.wav", "prompt": JAX_BOLD_PROMPT},
