@@ -1,11 +1,16 @@
 """Control de calidad para el audio generado por VoxCPM.
 
-Chequea cada bloque en 3 capas antes de dejarlo entrar al audio final:
+Chequea cada bloque en 4 capas antes de dejarlo entrar al audio final:
   1. Duracion (sin modelo): detecta loops/repeticiones o cortes.
   2. Idioma (ASR): el bug real que motivo este modulo -- el TTS puede
      "hablar en varios idiomas" en un bloque suelto.
   3. Similitud (ASR): compara la transcripcion contra el texto pedido,
      atrapa gibberish/alucinacion aunque el idioma detectado sea correcto.
+  4. Similitud por tramo (ASR): la capa 3 promedia todo el bloque y una frase
+     inventada en medio casi no la mueve (medido 18/11/2026: audio bueno 0.82
+     contra 0.70 con una frase alucinada, umbral 0.60). Esta capa alinea por
+     palabras y mide cada tramo que no tuvo equivalente exacto, asi que delata
+     la frase que no se dijo.
 
 Las funciones de evaluacion son puras (no requieren whisper) para poder
 testearlas sin cargar ningun modelo. `AudioQA` es la unica pieza con estado:
@@ -24,6 +29,7 @@ class QAThresholds:
     expected_lang: str = "es"
     min_language_prob: float = 0.5
     min_similarity: float = 0.6
+    min_span_similarity: float = 0.7
     max_duration_ratio: float = 1.8
     min_duration_ratio: float = 0.5
     chars_per_second: float = 15.0
@@ -37,6 +43,8 @@ class QAResult:
     language: str = ""
     language_prob: float = 0.0
     similarity: float = 0.0
+    span_similarity: float = 1.0
+    worst_span: str = ""
     duration_ratio: float = 0.0
 
 
@@ -62,6 +70,42 @@ def duration_check(text, duration, thresholds=QAThresholds()):
     return ok, ratio
 
 
+def span_similarities(expected, actual, min_words=6):
+    """Similitud por tramo del texto pedido, alineado por palabras.
+
+    La oracion del ASR no coincide con la del Script (junta oraciones, las
+    parte o pierde puntuacion), asi que emparejar oracion con oracion colapsa
+    todo en un solo tramo. El emparejamiento se hace palabra a palabra y se
+    mide cada tramo del Script que no tuvo equivalente exacto; los tramos de
+    menos de `min_words` quedan a cargo de la similitud global (el ASR se come
+    palabras sueltas todo el tiempo). Una frase dicha de mas (fuera del Script)
+    tambien cuenta como tramo de 0.
+
+    Devuelve [(tramo, similitud)] solo con los tramos medidos; lista vacia si
+    el bloque coincide palabra por palabra.
+    """
+    pedidas = normalize_text(expected).split()
+    oidas = normalize_text(actual).split()
+    if not pedidas:
+        return []
+    if not oidas:
+        return [(" ".join(pedidas), 0.0)]
+    tramos = []
+    opcodes = difflib.SequenceMatcher(a=pedidas, b=oidas, autojunk=False).get_opcodes()
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag == "equal":
+            continue
+        if tag == "insert":
+            if j2 - j1 >= min_words:
+                tramos.append((f"dicho de mas: {' '.join(oidas[j1:j2])}", 0.0))
+            continue
+        if i2 - i1 < min_words:
+            continue
+        esperado = " ".join(pedidas[i1:i2])
+        tramos.append((esperado, text_similarity(esperado, " ".join(oidas[j1:j2]))))
+    return tramos
+
+
 def evaluate(text, duration, transcript, language, language_prob, thresholds=QAThresholds()):
     reasons = []
 
@@ -84,6 +128,15 @@ def evaluate(text, duration, transcript, language, language_prob, thresholds=QAT
     if not similarity_ok:
         reasons.append(f"similitud baja con el texto pedido ({similarity:.2f} < {thresholds.min_similarity})")
 
+    tramos = span_similarities(text, transcript)
+    span_similarity = min((valor for _tramo, valor in tramos), default=1.0)
+    worst_span = min(tramos, key=lambda tramo: tramo[1])[0] if tramos else ""
+    if span_similarity < thresholds.min_span_similarity:
+        reasons.append(
+            f"tramo con similitud baja ({span_similarity:.2f} < "
+            f"{thresholds.min_span_similarity}): {worst_span[:80]}"
+        )
+
     return QAResult(
         ok=not reasons,
         reasons=tuple(reasons),
@@ -91,6 +144,8 @@ def evaluate(text, duration, transcript, language, language_prob, thresholds=QAT
         language=language,
         language_prob=language_prob,
         similarity=similarity,
+        span_similarity=span_similarity,
+        worst_span=worst_span,
         duration_ratio=ratio,
     )
 

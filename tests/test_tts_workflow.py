@@ -13,10 +13,14 @@ from tts_workflow import (
     build_voxcpm_payload,
     generate_validated_block,
     parse_structured_shorts,
+    qa_json_path_for,
+    read_qa_json,
+    rejected_cache_path_for,
     rejected_path_for,
     seconds_to_srt,
     split_text_blocks,
     tmp_path_for,
+    write_qa_json,
 )
 
 
@@ -140,6 +144,63 @@ def test_generate_validated_block_reuses_existing_file(tmp_path):
     assert result.status == "reused"
     assert result.sample_rate == 16000
     assert result.duration == pytest.approx(0.5, abs=0.01)
+
+
+def test_generate_validated_block_valida_el_wav_del_cache(tmp_path):
+    """18/11/2026: un bloque del cache ya no entra al audio sin pasar por QA."""
+    block_path = str(tmp_path / "bloque_001.wav")
+    with open(block_path, "wb") as f:
+        f.write(_wav_bytes(duration_s=0.5))
+    qa = _StubQA([QAResult(ok=True, reasons=(), transcript="hola")])
+
+    def fail_generate(payload):
+        raise AssertionError("no deberia generar si el cache pasa el QA")
+
+    result = generate_validated_block("hola", block_path, _build_payload, fail_generate, qa=qa)
+
+    assert result.status == "reused"
+    assert len(qa.calls) == 1
+    assert os.path.exists(qa_json_path_for(block_path))
+
+
+def test_generate_validated_block_regenera_si_el_cache_falla_qa(tmp_path):
+    """El wav guardado que no pasa se aparta y el bloque se genera de nuevo."""
+    block_path = str(tmp_path / "bloque_001.wav")
+    with open(block_path, "wb") as f:
+        f.write(_wav_bytes(duration_s=0.5))
+    qa = _StubQA([
+        QAResult(ok=False, reasons=("tramo con similitud baja",)),
+        QAResult(ok=True, reasons=()),
+    ])
+
+    def generate_fn(payload):
+        return _wav_bytes(duration_s=0.4), {}
+
+    result = generate_validated_block("hola", block_path, _build_payload, generate_fn,
+                                     qa=qa, max_retries=1)
+
+    assert result.status == "generated"
+    assert result.attempts == 1
+    assert os.path.exists(rejected_cache_path_for(block_path))
+    assert os.path.exists(block_path)
+    assert os.path.exists(qa_json_path_for(block_path))
+
+
+def test_write_qa_json_guarda_transcript_y_puntajes(tmp_path):
+    block_path = str(tmp_path / "bloque_001.wav")
+    with open(block_path, "wb") as f:
+        f.write(_wav_bytes(duration_s=0.5))
+    resultado = QAResult(ok=True, transcript="hola mundo", language="es", language_prob=0.9,
+                         similarity=0.95, span_similarity=0.8, worst_span="hola", duration_ratio=1.0)
+
+    ruta = write_qa_json(block_path, "hola mundo", resultado, "generated")
+    leido = read_qa_json(block_path, "hola mundo")
+
+    assert Path(ruta).exists()
+    assert leido is not None
+    assert leido.transcript == "hola mundo"
+    assert leido.span_similarity == pytest.approx(0.8)
+    assert read_qa_json(block_path, "otro texto") is None  # el texto cambio: hay que remedir
 
 
 def test_generate_validated_block_generates_without_qa(tmp_path):

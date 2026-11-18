@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import re
@@ -8,6 +9,8 @@ from typing import Iterable, Optional
 
 import numpy as np
 import soundfile as sf
+
+from audio_qa import QAResult
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,7 @@ def write_qa_report(failures, output_dir, filename="qa_report.txt"):
         lines.append(f"Transcripcion: {qa_result.transcript}")
         lines.append(f"Idioma detectado: {qa_result.language} (prob={qa_result.language_prob:.2f})")
         lines.append(f"Similitud: {qa_result.similarity:.2f}")
+        lines.append(f"Peor tramo: {qa_result.span_similarity:.2f} ({qa_result.worst_span})")
         lines.append(f"Ratio de duracion: {qa_result.duration_ratio:.2f}")
         lines.append(f"Razones: {'; '.join(qa_result.reasons)}")
         lines.append("")
@@ -266,6 +270,76 @@ def tmp_path_for(block_path):
     aunque el audio sea bueno (caso real que costo 25 bloques).
     """
     return f"{block_path}.{os.getpid()}.tmp.wav"
+
+
+def qa_json_path_for(block_path):
+    root, _ext = os.path.splitext(block_path)
+    return f"{root}.qa.json"
+
+
+def rejected_cache_path_for(block_path):
+    """Copia apartada del wav de cache que ya no pasa el QA."""
+    root, _ext = os.path.splitext(block_path)
+    return f"{root}.cache-rejected.wav"
+
+
+def write_qa_json(block_path, text, qa_result, status):
+    """Deja el veredicto del QA junto al wav (`<bloque>.qa.json`).
+
+    Guarda la transcripcion y los puntajes medidos: si despues un bloque suena
+    mal, el archivo dice que se oyo y con que numeros, sin volver a transcribir.
+    """
+    datos = {
+        "block": os.path.basename(block_path),
+        "status": status,
+        "text": text,
+        "ok": bool(qa_result.ok),
+        "transcript": qa_result.transcript,
+        "language": qa_result.language,
+        "language_prob": round(float(qa_result.language_prob), 4),
+        "similarity": round(float(qa_result.similarity), 4),
+        "span_similarity": round(float(qa_result.span_similarity), 4),
+        "worst_span": qa_result.worst_span,
+        "duration_ratio": round(float(qa_result.duration_ratio), 4),
+        "reasons": list(qa_result.reasons),
+        "wav_mtime": os.path.getmtime(block_path) if os.path.exists(block_path) else None,
+    }
+    path = qa_json_path_for(block_path)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def read_qa_json(block_path, text):
+    """Veredicto ya medido para este wav, si sigue vigente (si no, None).
+
+    Se descarta si el texto del bloque cambio o si el wav es mas nuevo que el
+    json (audio regenerado): en ambos casos hay que volver a medir.
+    """
+    path = qa_json_path_for(block_path)
+    try:
+        with open(path, encoding="utf-8") as f:
+            datos = json.load(f)
+        if datos.get("text") != text:
+            return None
+        if os.path.getmtime(block_path) > os.path.getmtime(path):
+            return None
+    except (OSError, ValueError):
+        return None
+    try:
+        return QAResult(
+            ok=bool(datos.get("ok")),
+            reasons=tuple(datos.get("reasons") or ()),
+            transcript=datos.get("transcript", ""),
+            language=datos.get("language", ""),
+            language_prob=float(datos.get("language_prob", 0.0)),
+            similarity=float(datos.get("similarity", 0.0)),
+            span_similarity=float(datos.get("span_similarity", 1.0)),
+            worst_span=datos.get("worst_span", ""),
+            duration_ratio=float(datos.get("duration_ratio", 0.0)),
+        )
+    except TypeError:
+        return None
 
 
 class GenerationPipeline:
@@ -347,7 +421,7 @@ def generate_validated_block(
 
     Si `qa` se provee (cualquier objeto con `.validate(text, wav_path,
     duration) -> resultado con .ok y .reasons`), valida cada intento antes de
-    aceptarlo. En caso de fallo reintenta hasta `max_retries` veces mas,
+    aceptarlo y tambien el wav ya guardado cuando el bloque es del cache. En caso de fallo reintenta hasta `max_retries` veces mas,
     variando la seed via `build_payload(text, seed=...)`. Si sigue fallando,
     el bloque se pone en cuarentena (ver `BlockResult.status`).
 
@@ -359,7 +433,22 @@ def generate_validated_block(
     if os.path.exists(block_path):
         info = get_audio_info(block_path)
         wav, sr = read_wav(block_path)
-        return BlockResult(status="reused", text=text, wav=wav, sample_rate=sr, duration=info.duration)
+        if qa is None:
+            return BlockResult(status="reused", text=text, wav=wav, sample_rate=sr, duration=info.duration)
+        # 18/11/2026: el wav del cache entraba al audio final sin que nadie lo
+        # mirara (un bloque viejo o alucinado se reusaba para siempre). Ahora se
+        # acepta solo con QA: sirve el veredicto ya guardado en el .qa.json y,
+        # si el bloque no pasa, se aparta y se regenera como cualquier otro.
+        qa_result = read_qa_json(block_path, text)
+        if qa_result is None:
+            qa_result = qa.validate(text, block_path, info.duration)
+            if qa_result.ok:
+                write_qa_json(block_path, text, qa_result, "reused")
+        if qa_result.ok:
+            return BlockResult(status="reused", text=text, wav=wav, sample_rate=sr,
+                               duration=info.duration, qa_result=qa_result)
+        log(f"    QA del cache fallo: {'; '.join(qa_result.reasons)} -- se regenera")
+        os.replace(block_path, rejected_cache_path_for(block_path))
 
     tmp_path = tmp_path_for(block_path)
     attempts = 0
@@ -390,6 +479,7 @@ def generate_validated_block(
                         continue
                     rejected_path = rejected_path_for(block_path)
                     os.replace(tmp_path, rejected_path)
+                    write_qa_json(rejected_path, text, qa_result, "quarantined")
                     return BlockResult(
                         status="quarantined",
                         text=text,
@@ -402,6 +492,8 @@ def generate_validated_block(
 
             os.replace(tmp_path, block_path)
             wav, sr = read_wav(block_path)
+            if qa_result is not None:
+                write_qa_json(block_path, text, qa_result, "generated")
             return BlockResult(
                 status="generated",
                 text=text,

@@ -193,7 +193,8 @@ def run(
             block_path = block_path_for(short_idx, block_idx)
 
             if os.path.exists(block_path):
-                result = generate_validated_block(block, block_path, build_payload, generate_fn, qa=None)
+                result = generate_validated_block(block, block_path, build_payload, generate_fn,
+                                                  qa=qa, max_retries=max_retries)
                 sample_rate = sample_rate or result.sample_rate
                 fragments.append(result.wav)
                 srt_entries.append((block, result.duration))
