@@ -9,3 +9,5 @@ app_local.py
 benchmark_*.json
 benchmarks/escucha_*/
 .freebuff/
+Sensible/proyectos.json
+logs/

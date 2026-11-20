@@ -14,6 +14,7 @@ Requiere que voxcpm_server.py ya este corriendo (el modelo vive ahi, no aqui).
 
 import argparse
 import glob
+import json
 import os
 import socket
 import time
@@ -186,6 +187,38 @@ def _claim_instance_lock():
     return sock
 
 
+def _load_voices_json(path):
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            return json.load(f) or {}
+    except (OSError, ValueError) as exc:
+        print(f"Aviso: no pude leer '{path}' ({exc}); se usa --voice.")
+        return {}
+
+
+def _voice_from_entry(entry):
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get("es") or next(iter(entry.values()), None)
+    return None
+
+
+def _voice_for_file(txt_path, default_voice, voices_cfg):
+    """Voz por canal: prefijo del .txt ('lc-...', 'vb-...', 'cine ...') o default."""
+    stem = os.path.splitext(os.path.basename(txt_path))[0].lower()
+    canales = (voices_cfg or {}).get("canales") or {}
+    for clave, entrada in canales.items():
+        clave = str(clave).lower()
+        if stem == clave or stem.startswith(clave + "-") or stem.startswith(clave + "_") or stem.startswith(clave + " "):
+            voz = _voice_from_entry(entrada)
+            if voz:
+                return voz
+    return _voice_from_entry((voices_cfg or {}).get("default")) or default_voice
+
+
 def _resolve_voice(voice):
     """Devuelve (reference_wav, prompt_text) para la voz pedida."""
     if voice in VOICE_PRESETS:
@@ -199,7 +232,9 @@ def _resolve_voice(voice):
     return None, None
 
 
-def process_file(txt_path, watch_dir, server_url, qa=None, validate_audio=True, voice=DEFAULT_VOICE):
+def process_file(
+    txt_path, watch_dir, server_url, qa=None, validate_audio=True, voice=DEFAULT_VOICE, voices_cfg=None
+):
     plan = plan_outputs(txt_path, watch_dir)
 
     if plan.kind is None:
@@ -217,6 +252,8 @@ def process_file(txt_path, watch_dir, server_url, qa=None, validate_audio=True, 
         print(f"'{txt_path}' se modifico hace muy poco, se revisa en el siguiente ciclo.")
         return
 
+    if voices_cfg:
+        voice = _voice_for_file(txt_path, voice, voices_cfg)
     reference_wav, prompt_text = _resolve_voice(voice)
     print(f"\n=== Procesando '{txt_path}' ({plan.kind}, voz={voice}) ===")
     if plan.kind == "script":
@@ -245,11 +282,19 @@ def process_file(txt_path, watch_dir, server_url, qa=None, validate_audio=True, 
         )
 
 
-def scan_once(watch_dir, server_url, qa=None, validate_audio=True, voice=DEFAULT_VOICE):
+def scan_once(watch_dir, server_url, qa=None, validate_audio=True, voice=DEFAULT_VOICE, voices_cfg=None):
     pattern = os.path.join(watch_dir, "*.txt")
     for txt_path in sorted(glob.glob(pattern)):
         try:
-            process_file(txt_path, watch_dir, server_url, qa=qa, validate_audio=validate_audio, voice=voice)
+            process_file(
+                txt_path,
+                watch_dir,
+                server_url,
+                qa=qa,
+                validate_audio=validate_audio,
+                voice=voice,
+                voices_cfg=voices_cfg,
+            )
         except Exception as exc:
             print(f"ERROR procesando '{txt_path}': {exc}")
             traceback.print_exc()
@@ -286,7 +331,13 @@ def main():
         choices=sorted(VOICE_PRESETS.keys()) if VOICE_PRESETS else ["david", "benjamin"],
         help="Voz de referencia (default: %(default)s). 'david' para Chismes MX, 'benjamin' para El Salvaje Oeste.",
     )
+    parser.add_argument(
+        "--voices-json",
+        default=None,
+        help="voices.json con voz por canal (prefijo del .txt); gana sobre --voice.",
+    )
     args = parser.parse_args()
+    voices_cfg = _load_voices_json(args.voices_json)
 
     instance_lock = _claim_instance_lock()
     if instance_lock is None:
@@ -296,7 +347,11 @@ def main():
             "carpeta corrompen los bloques y el QA los rechaza."
         )
 
-    print(f"Vigilando '{args.watch_dir}' cada {args.interval:.0f}s (servidor: {args.server_url}, voz={args.voice})")
+    fuente_voces = f"voices.json: {args.voices_json}" if voices_cfg else f"voz fija: {args.voice}"
+    print(
+        f"Vigilando '{args.watch_dir}' cada {args.interval:.0f}s "
+        f"(servidor: {args.server_url}, {fuente_voces})"
+    )
     print("Deja esta ventana abierta. El modelo debe estar cargado en voxcpm_server.py.")
 
     validate_audio = not args.no_validate
@@ -327,7 +382,7 @@ def main():
             if plan.done_marker and os.path.isfile(plan.done_marker):
                 os.remove(plan.done_marker)
         process_file(txt_path, args.watch_dir, args.server_url, qa=qa,
-                     validate_audio=validate_audio, voice=args.voice)
+                     validate_audio=validate_audio, voice=args.voice, voices_cfg=voices_cfg)
         return
 
     while True:
@@ -336,7 +391,14 @@ def main():
         except VoxCPMServerError as exc:
             print(f"Servidor VoxCPM no disponible: {exc}")
         else:
-            scan_once(args.watch_dir, args.server_url, qa=qa, validate_audio=validate_audio, voice=args.voice)
+            scan_once(
+                args.watch_dir,
+                args.server_url,
+                qa=qa,
+                validate_audio=validate_audio,
+                voice=args.voice,
+                voices_cfg=voices_cfg,
+            )
 
         if args.once:
             break

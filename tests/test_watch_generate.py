@@ -320,3 +320,31 @@ def test_claim_instance_lock_is_exclusive(monkeypatch):
         assert again is not None
     finally:
         again.close()
+
+
+def test_manager_pending_watch_detects_interrupted_shorts(tmp_path):
+    """Regresion del detector del lanzador: un SRT no vacio y la carpeta
+    shorts no alcanzan si falta un WAV; debe coincidir con is_done()."""
+    import voxcpm_manager
+
+    watch_dir = tmp_path / "Generate"
+    watch_dir.mkdir()
+    txt_path = watch_dir / "cine shorts.txt"
+    txt_path.write_text(
+        "### SHORT 1\nScript:\nUno\n\n---\n### SHORT 2\nScript:\nDos\n",
+        encoding="utf-8",
+    )
+
+    base_dir = watch_dir / "cine shorts"
+    shorts_dir = base_dir / "shorts"
+    shorts_dir.mkdir(parents=True)
+    (base_dir / "cine shorts_completo.srt").write_text("#Short 1\n", encoding="utf-8")
+    (shorts_dir / "short_1.wav").write_bytes(b"RIFF")
+
+    proyecto = voxcpm_manager.Proyecto(alias="test", nombre="Test", vault=tmp_path, modo="watch")
+    assert voxcpm_manager.plan_watch(txt_path, watch_dir)["ok"] is False
+    assert voxcpm_manager.pendientes_watch(proyecto) == [txt_path]
+
+    (shorts_dir / "short_2.wav").write_bytes(b"RIFF")
+    assert voxcpm_manager.plan_watch(txt_path, watch_dir)["ok"] is True
+    assert voxcpm_manager.pendientes_watch(proyecto) == []

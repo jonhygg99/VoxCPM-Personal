@@ -1,0 +1,12 @@
+{
+  "_doc": "Plantilla del registro. Copiala a Sensible/proyectos.json (ese archivo NO se comparte) y cambia las rutas. modo=auto detecta 3lang si hay 02_produccion/**/2_guion.md y watch si no.",
+  "default": "mi-proyecto",
+  "proyectos": {
+    "mi-proyecto": {
+      "nombre": "Mi Proyecto",
+      "vault": "D:/Obsidian Vaults/Mi Proyecto",
+      "modo": "auto",
+      "orden": 10
+    }
+  }
+}
