@@ -16,6 +16,8 @@ from tts_workflow import (
     write_qa_report,
     write_srt,
 )
+from voices.adrian_de import PROMPT_TEXT as ADRIAN_DE_PROMPT
+from voices.adrian_es import PROMPT_TEXT as ADRIAN_ES_PROMPT
 from voices.benjamin import PROMPT_TEXT as BENJAMIN_PROMPT
 from voices.david import PROMPT_TEXT as DAVID_PROMPT
 from voices.jax import PROMPT_TEXT as JAX_PROMPT
@@ -23,18 +25,22 @@ from voices.jax_bold import PROMPT_TEXT as JAX_BOLD_PROMPT
 from voices.joaquin import PROMPT_TEXT as JOAQUIN_PROMPT
 from voices.juan_sanchez import PROMPT_TEXT as JUAN_SANCHEZ_PROMPT
 from voices.juan_sanchez_calm import PROMPT_TEXT as JUAN_SANCHEZ_CALM_PROMPT
+from voices.konrad_klar import PROMPT_TEXT as KONRAD_KLAR_PROMPT
 from voices.leo_antonio import PROMPT_TEXT as LEO_ANTONIO_PROMPT
 from voices.leo_antonio_g2 import PROMPT_TEXT as LEO_ANTONIO_G2_PROMPT
 from voices.leo_antonio_g2_calma import PROMPT_TEXT as LEO_ANTONIO_G2_CALMA_PROMPT
 from voxcpm_client import DEFAULT_SERVER_URL, VoxCPMServerError, check_server, generate_wav_bytes_with_metrics
 
-# --- Voces disponibles (prompt + wav de referencia), audio separado por idioma en voices\<es|en|pt>\ ---
+# --- Voces disponibles (prompt + wav de referencia), audio separado por idioma en voices\<de|en|es|pt>\ ---
 VOICE_PRESETS = {
     "david": {"wav": r"voices\es\david.wav", "prompt": DAVID_PROMPT},
     "benjamin": {"wav": r"voices\es\benjamin.wav", "prompt": BENJAMIN_PROMPT},
     "juan_sanchez": {"wav": r"voices\es\juan_sanchez.wav", "prompt": JUAN_SANCHEZ_PROMPT},
     "juan_sanchez_calm": {"wav": r"voices\es\juan_sanchez_calm.wav", "prompt": JUAN_SANCHEZ_CALM_PROMPT},
     "joaquin": {"wav": r"voices\es\joaquin.wav", "prompt": JOAQUIN_PROMPT},
+    "adrian_es": {"wav": r"voices\es\adrian_es.wav", "prompt": ADRIAN_ES_PROMPT},
+    "adrian_de": {"wav": r"voices\de\adrian_de.wav", "prompt": ADRIAN_DE_PROMPT},
+    "konrad_klar": {"wav": r"voices\de\konrad_klar.wav", "prompt": KONRAD_KLAR_PROMPT},
     "jax": {"wav": r"voices\en\jax.wav", "prompt": JAX_PROMPT},
     "jax_bold": {"wav": r"voices\en\jax_bold.wav", "prompt": JAX_BOLD_PROMPT},
     "leo_antonio": {"wav": r"voices\pt\leo_antonio.wav", "prompt": LEO_ANTONIO_PROMPT},
