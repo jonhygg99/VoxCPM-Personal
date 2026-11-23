@@ -1,5 +1,5 @@
 {
-  "_doc": "Voces por proyecto. Copia este archivo a <vault>/Sensible/voices.json. default es la base por idioma; canales permite override por carpeta o prefijo del caso (3lang) o del .txt (watch). Gana el canal sobre default y --voz-* de la CLI gana sobre todo. El aleman solo entra si agregas una voz 'de' aqui y el caso tiene 2_guion_de.md; los 2_guion_de.md deben tener las mismas escenas que es/en/pt.",
+  "_doc": "Voces por proyecto. Copia este archivo a <vault>/Sensible/voices.json. default es la base por idioma; canales permite override por carpeta o prefijo del caso (3lang) o del .txt (watch). Gana el canal sobre default y --voz-* de la CLI gana sobre todo.",
   "default": {
     "es": "david",
     "en": "jax",

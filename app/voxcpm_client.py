@@ -80,7 +80,7 @@ def _request_json(url_path, server_url, timeout=2):
         status, _headers, data = _http_request("GET", server_url, url_path, timeout=timeout)
     except OSError as exc:
         raise VoxCPMServerError(
-            "No pude conectar con el servidor VoxCPM. " "Abre otra terminal y ejecuta: python voxcpm_server.py"
+            "No pude conectar con el servidor VoxCPM. " "Abre otra terminal y ejecuta: python app/voxcpm_server.py"
         ) from exc
     if status != 200:
         raise VoxCPMServerError(f"El servidor VoxCPM devolvio un error: {data.decode('utf-8', errors='replace')}")
@@ -114,7 +114,7 @@ def generate_wav_bytes_with_metrics(payload, server_url=DEFAULT_SERVER_URL, time
         )
     except OSError as exc:
         raise VoxCPMServerError(
-            "No pude conectar con el servidor VoxCPM. " "Abre otra terminal y ejecuta: python voxcpm_server.py"
+            "No pude conectar con el servidor VoxCPM. " "Abre otra terminal y ejecuta: python app/voxcpm_server.py"
         ) from exc
     if status != 200:
         raise VoxCPMServerError(f"El servidor VoxCPM devolvio un error: {data.decode('utf-8', errors='replace')}")

@@ -17,7 +17,7 @@ import copy
 import json
 from pathlib import Path
 
-PERFIL_PATH = Path(__file__).resolve().parent / "benchmarks" / "perfil-maquina.json"
+PERFIL_PATH = Path(__file__).resolve().parents[1] / "benchmarks" / "perfil-maquina.json"
 
 DEFAULTS = {
     "servidor": {"optimize": True, "stop_check_batch": 2},

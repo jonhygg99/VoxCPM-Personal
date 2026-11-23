@@ -24,7 +24,7 @@ black src/
 
 ### Run Gradio demo
 ```bash
-python app.py
+python app/app.py
 ```
 
 ### CLI
@@ -41,6 +41,10 @@ The library lives in `src/voxcpm/` and is installed as the `voxcpm` package.
 
 ### Entry points
 
+- **Launcher** (`voxcpm.bat` → `app/voxcpm_manager.py`) — lanzador global por proyectos (vaults). El codigo personal vive en `app/` (manager, server, watch, generate_*); la libreria en `src/voxcpm/`; el pipeline 3lang en `scripts/voz_3idiomas.py`.
+  - Modos de voz, siempre en local: `3lang` (`scripts/voz_3idiomas.py`) y `watch` (`app/watch_generate.py`); el modo se declara en `Sensible/proyectos.json`. Los vaults no llevan copia de ningun script de voz: voz por canal en `<vault>/Sensible/voices.json`.
+  - Extras centrales: `scripts/generar_voz_pt.py` (solo portugues, `voxcpm.bat <alias> --pt -- ...`) y `scripts/empalmar_cta.py` (CTAs, `--empalmar`).
+  - Los `Scripts/voice/*.bat` de cada vault son shims de 3 lineas: `voxcpm.bat --vault ... [--modo X | --accion Y]`. `--accion` (`app/voxcpm_manager.py`) ejecuta sin menu: `servidor`, `3lang[-todos]`, `watch[-once]`, `pt`.
 - **`VoxCPM`** (`core.py`) — public facade. `VoxCPM.from_pretrained(hf_model_id)` downloads weights from HF Hub and dispatches to the correct internal model class based on the `"architecture"` field in `config.json`.
   - `"voxcpm"` → `VoxCPMModel` (VoxCPM1.5 / 0.5B)
   - `"voxcpm2"` → `VoxCPM2Model` (VoxCPM2)

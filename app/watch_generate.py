@@ -143,6 +143,15 @@ def shorts_esperados(txt_path):
         return None
 
 
+def omitido(txt_path):
+    """True si el txt no necesita audio (hay <stem>.done junto al txt)."""
+    base, _ = os.path.splitext(txt_path)
+    return any(
+        os.path.isfile(cand)
+        for cand in (txt_path + ".done", txt_path + ".done.md", base + ".done", base + ".done.md")
+    )
+
+
 def is_done(plan, txt_path=None):
     """True si ya hay audio generado para este plan (no solo carpetas/SRT vacios).
 
@@ -285,6 +294,8 @@ def process_file(
 def scan_once(watch_dir, server_url, qa=None, validate_audio=True, voice=DEFAULT_VOICE, voices_cfg=None):
     pattern = os.path.join(watch_dir, "*.txt")
     for txt_path in sorted(glob.glob(pattern)):
+        if omitido(txt_path):
+            continue  # marcado done: fuera de pendientes y del automatico (--txt manual sigue generando)
         try:
             process_file(
                 txt_path,

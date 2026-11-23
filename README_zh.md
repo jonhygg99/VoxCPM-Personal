@@ -261,13 +261,13 @@ voxcpm --help
 ### Web Demo
 
 ```bash
-python app.py --port 8808  # 然后在浏览器打开 http://localhost:8808
+python app/app.py --port 8808  # 然后在浏览器打开 http://localhost:8808
 ```
 
 使用 `--device` 选择运行设备：
 
 ```bash
-python app.py --device auto
+python app/app.py --device auto
 ```
 
 支持的取值包括 `auto`、`cpu`、`mps`、`cuda` 和 `cuda:N`。在 Apple Silicon Mac 上，`auto` 会在可用时使用 MPS。

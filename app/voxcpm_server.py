@@ -18,12 +18,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import soundfile as sf
 
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(PROJECT_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
-# La raiz tambien: los modulos hermanos (perfil_maquina) deben importar aunque
-# el server se lance con exec() desde otro directorio (voxcpm_wrapper.py).
+# app/ tambien: los modulos hermanos (perfil_maquina, voices) deben importar
+# aunque el server se lance con exec() desde otro directorio (voxcpm_wrapper.py).
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 

@@ -24,7 +24,7 @@ black src/
 
 ### Run Gradio demo
 ```bash
-python app.py
+python app/app.py
 ```
 
 ### CLI

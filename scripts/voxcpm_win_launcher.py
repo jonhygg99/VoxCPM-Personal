@@ -50,7 +50,7 @@ _hf_fd._create_symlink = _patched_create_symlink
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-SERVER_SCRIPT = PROJECT_DIR / "voxcpm_server.py"
+SERVER_SCRIPT = PROJECT_DIR / "app" / "voxcpm_server.py"
 if not SERVER_SCRIPT.is_file():
     raise SystemExit(f"voxcpm_win_launcher: no existe {SERVER_SCRIPT}.")
 

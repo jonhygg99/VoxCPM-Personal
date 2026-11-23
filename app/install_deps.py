@@ -11,10 +11,10 @@ Instala el paquete local en modo editable con todos los extras:
                                                           torch.compile + CUDA graphs)
 
 Uso:
-  python install_deps.py            # instala en el intérprete Python actual
-  python install_deps.py --venv     # usa venv_voxcpm/ (Scripts en Windows, bin en Unix)
-  python install_deps.py --check    # solo verifica el entorno, no instala nada
-  python install_deps.py --venv --check
+  python app/install_deps.py            # instala en el intérprete Python actual
+  python app/install_deps.py --venv     # usa venv_voxcpm/ (Scripts en Windows, bin en Unix)
+  python app/install_deps.py --check    # solo verifica el entorno, no instala nada
+  python app/install_deps.py --venv --check
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 VENV_DIR = ROOT / "venv_voxcpm"
 EXTRAS = "dev,timestamps,qa,compile"
 
@@ -71,7 +71,7 @@ def check_environment(python: str) -> None:
             print(f"  [FALTA] {label}: {err[-1] if err else 'desconocido'}")
     print(f"\n  {len(checks) - failed}/{len(checks)} componentes correctos.")
     if failed:
-        print("  Ejecuta 'python install_deps.py --venv' para instalarlo todo.")
+        print("  Ejecuta 'python app/install_deps.py --venv' para instalarlo todo.")
 
 
 def main() -> None:
@@ -119,7 +119,7 @@ def main() -> None:
 
     print(
         "\nSiguientes pasos:\n"
-        "  - Servidor TTS con torch.compile:  python voxcpm_server.py --optimize\n"
+        "  - Servidor TTS con torch.compile:  python app/voxcpm_server.py --optimize\n"
         "  - Primera ejecución con --optimize tarda unos minutos compilando.\n"
         "  - Si aparece 'torch.compile disabled - triton is not installed',\n"
         "    vuelve a ejecutar este script (el extra 'compile' lo instala)."

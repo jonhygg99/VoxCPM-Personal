@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""voz_3idiomas.py — narra el mismo guion en es/en/pt (y aleman si hay 2_guion_de.md) y alinea por escenas.
+"""voz_3idiomas.py — narra el mismo guion en es/en/pt y alinea por escenas.
 
 Cada **escena es un parrafo** del guion (bloques separados por linea en blanco).
 En archivos .md se ignoran encabezados, citas (>) y separadores, y se corta en la
@@ -15,7 +15,7 @@ Flujo:
      y cada escena empieza y termina en el mismo segundo en todos los idiomas.
 
 Salidas:
-  Generate/<slug>/es.wav, en.wav, pt.wav (y de.wav)   audio alineado (misma duracion)
+  Generate/<slug>/es.wav, en.wav, pt.wav   audio alineado (misma duracion)
   Generate/<slug>/es.srt, en.srt, pt.srt   cues por bloque, con los huecos
   Generate/<slug>/escenas.csv              rejilla de escenas
   Generate/<slug>/alineacion.json          detalle reproducible
@@ -31,25 +31,19 @@ aparece en Generate desde la primera escena, sin esperar a la alineacion final.
 Uso (desde VoxCPM-Personal):
   python scripts/voz_3idiomas.py --vault "D:/Obsidian Vaults/Mi Vault" --caso "02_produccion/.../01-tablilla-motin-dioses"
   python scripts/voz_3idiomas.py --vault "..." --todos
-  python scripts/voz_3idiomas.py --vault "..." --es a.txt --en b.txt --pt c.txt [--de d.txt] --out Generate/prueba
+  python scripts/voz_3idiomas.py --vault "..." --es a.txt --en b.txt --pt c.txt --out Generate/prueba
   python scripts/voz_3idiomas.py --vault "..." --caso "..." --dry-run
   python scripts/voz_3idiomas.py --vault "..." --caso "..." --solo-alinear
   python scripts/voz_3idiomas.py --vault "..." --caso "..." --solo-normalizar
   python scripts/voz_3idiomas.py --vault "..." --caso "..." --force
 
 --todos recorre los casos con 2_guion.md, _en y _pt; salta los ya verificados y
-lista los que solo tienen espanol. El aleman es opcional: entra al lote cuando el
-caso tiene 2_guion_de.md. Al cerrar, la normalizacion EBU R128 deja los WAV en
--16 LUFS y -1.5 dBTP sin cambiar los frames ni la rejilla.
+lista los que solo tienen espanol. Al cerrar, la normalizacion EBU R128 deja los
+WAV en -16 LUFS y -1.5 dBTP sin cambiar los frames ni la rejilla.
 El servidor debe estar corriendo (voxcpm.bat lo arranca y reutiliza entre proyectos).
-El aleman solo entra si voices.json declara una voz 'de' y el caso tiene 2_guion_de.md.
---out-dir cambia la carpeta raiz de salida (default: Generate). Con --desde-txt el
-guion espanol sale del .txt <iniciales>-<slug>.txt de esa carpeta y el lote procesa
-solo los casos que tengan ese .txt; el ingles, el portugues y el aleman siguen
-saliendo de 2_guion_en.md, 2_guion_pt.md y 2_guion_de.md del caso.
-Voces por defecto: joaquin (es), jax_bold (en), leo_antonio_g2 (pt), konrad_klar
-(de); se registran en VoxCPM-Personal/voices y se pueden cambiar con
---voz-es/--voz-en/--voz-pt/--voz-de.
+--out-dir cambia la carpeta raiz de salida (default: Generate).
+Voces por defecto: joaquin (es), jax_bold (en), leo_antonio_g2 (pt); se registran
+en VoxCPM-Personal/voices y se pueden cambiar con --voz-es/--voz-en/--voz-pt.
 """
 
 import argparse
@@ -64,15 +58,15 @@ import urllib.request
 import wave
 from pathlib import Path
 
-IDIOMAS_ORDEN = ("es", "en", "pt", "de")
+IDIOMAS_ORDEN = ("es", "en", "pt")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VAULT_ROOT = Path.cwd()
 RUTAS_JSON = VAULT_ROOT / "Sensible" / "rutas.json"
 VOICES_JSON = VAULT_ROOT / "Sensible" / "voices.json"
 
-IDIOMAS = ["es", "en", "pt"]  # "de" se suma cuando el caso tiene 2_guion_de.md
+IDIOMAS = ["es", "en", "pt"]
 IDIOMAS_REQUERIDOS = ("es", "en", "pt")
-VOCES_DEFAULT = {"es": "joaquin", "en": "jax_bold", "pt": "leo_antonio_g2", "de": "konrad_klar"}
+VOCES_DEFAULT = {"es": "joaquin", "en": "jax_bold", "pt": "leo_antonio_g2"}
 VOCES_CFG = {}
 VOCES_CLI = {}
 MODEL_ID = "openbmb/VoxCPM2"
@@ -95,7 +89,9 @@ def leer_escenas(path):
         for linea in lineas:
             texto = linea.rstrip()
             bajo = texto.strip().lower()
-            if bajo.startswith("#") and ("notas" in bajo or "notes" in bajo):
+            if bajo.startswith("#") and (
+                "notas" in bajo or "notes" in bajo or "notizen" in bajo
+            ):
                 break
             if not texto.strip():
                 limpias.append("")
@@ -718,6 +714,30 @@ def descubrir_casos(vault):
     return [guion.parent for guion in sorted(base.glob("**/2_guion.md")) if guion.parent.name != "_TEMPLATE"]
 
 
+SIN_VOZ = ("done", "done.md")
+
+
+def caso_omitido(caso):
+    """True si el caso no necesita audio: archivo done.md o 5_publicacion.md con Status: Published."""
+    base = Path(caso)
+    if any((base / nombre).is_file() for nombre in SIN_VOZ):
+        return True
+    try:
+        lineas = (base / "5_publicacion.md").read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, ValueError):
+        return False
+    lineas = [linea.strip() for linea in lineas if linea.strip()]
+    return bool(lineas) and lineas[-1] == "Status: Published"
+
+
+def marcar_done(caso):
+    """Crea el archivo done en la carpeta del caso (todas las voces hechas)."""
+    try:
+        (Path(caso) / "done").touch()
+    except OSError as exc:
+        print("Aviso: no se pudo crear done en %s (%s)." % (caso, exc))
+
+
 def casos_con_tres_guiones(vault=None):
     """Devuelve (casos con es+en+pt, casos que solo tienen espanol o les falta una traduccion)."""
     listos, bloqueados = [], []
@@ -730,11 +750,8 @@ def casos_con_tres_guiones(vault=None):
 
 
 def idiomas_del_caso(caso):
-    """es/en/pt siempre; de si el caso tiene 2_guion_de.md y voices.json lo habilita."""
-    idiomas = list(IDIOMAS_REQUERIDOS)
-    if de_habilitado() and (Path(caso) / "2_guion_de.md").is_file():
-        idiomas.append("de")
-    return idiomas
+    """Idiomas del caso: es/en/pt."""
+    return list(IDIOMAS_REQUERIDOS)
 
 
 def _voz_de_entrada(entrada, idioma):
@@ -749,16 +766,6 @@ def _voz_de_entrada(entrada, idioma):
         if not any(clave in entrada for clave in IDIOMAS_ORDEN):
             return next(iter(entrada.values()), None)
     return None
-
-
-def de_habilitado():
-    """El aleman solo entra si voices.json lo declara (o --voz-de lo pide)."""
-    if (VOCES_CLI or {}).get("de"):
-        return True
-    cfg = VOCES_CFG or {}
-    if _voz_de_entrada(cfg.get("default"), "de"):
-        return True
-    return any(_voz_de_entrada(valor, "de") for valor in (cfg.get("canales") or {}).values())
 
 
 def cargar_voices_json(ruta):
@@ -798,7 +805,7 @@ def voces_del_caso(caso, cfg=None, overrides=None):
     voces = dict(VOCES_DEFAULT)
     cfg = cfg or {}
     entrada = cfg.get("default")
-    for idioma in IDIOMAS_REQUERIDOS + ("de",):
+    for idioma in IDIOMAS_REQUERIDOS:
         valor = _voz_de_entrada(entrada, idioma)
         if valor:
             voces[idioma] = valor
@@ -807,7 +814,7 @@ def voces_del_caso(caso, cfg=None, overrides=None):
         entrada_canal = canales.get(clave) or canales.get(clave.lower())
         if not entrada_canal:
             continue
-        for idioma in IDIOMAS_REQUERIDOS + ("de",):
+        for idioma in IDIOMAS_REQUERIDOS:
             valor = _voz_de_entrada(entrada_canal, idioma)
             if valor:
                 voces[idioma] = valor
@@ -818,36 +825,41 @@ def voces_del_caso(caso, cfg=None, overrides=None):
     return voces
 
 
-def iniciales_canal(caso):
-    """Iniciales del canal ('tragico-clasico' -> 'tc') desde la ruta del caso."""
-    partes = caso.resolve().parts
-    if "02_produccion" not in partes:
-        return None
-    idx = partes.index("02_produccion")
-    if idx + 1 >= len(partes):
-        return None
-    canal = partes[idx + 1]
-    return "".join(parte[0] for parte in canal.split("-") if parte).lower()
+def carpeta_salida(base_out, caso):
+    """Carpeta de Generate del caso, aunque el prefijo numerico haya cambiado.
+
+    Los casos se renombran (08-slug -> 23-slug) y el audio sigue en la carpeta
+    vieja: si el nombre exacto no existe y hay una sola carpeta con el mismo
+    slug, esa es la salida.
+    """
+    base_out, nombre = Path(base_out), Path(caso).name
+    exacta = base_out / nombre
+    slug = nombre.split("-", 1)[-1]
+    if exacta.is_dir() or slug == nombre or not base_out.is_dir():
+        return exacta
+    iguales = [d for d in base_out.iterdir() if d.is_dir() and d.name.split("-", 1)[-1] == slug]
+    return iguales[0] if len(iguales) == 1 else exacta
 
 
-def txt_del_caso(base_out, caso):
-    """El .txt de guion que la carpeta de salida tiene para el caso, o None."""
-    iniciales = iniciales_canal(caso)
-    if not iniciales:
-        return None
-    ruta = Path(base_out) / ("%s-%s.txt" % (iniciales, caso.name))
-    return ruta if ruta.is_file() else None
+def falta_para(out, idiomas):
+    """Lo que le falta a una carpeta de salida: idiomas sin wav/srt, o 'volumen'.
+
+    Fuente unica del criterio: lo usan salidas_completas() y la etiqueta del menu.
+    """
+    faltan = [
+        idioma for idioma in idiomas
+        if not all((out / ("%s.%s" % (idioma, ext))).is_file() for ext in ("wav", "srt"))
+    ]
+    if not faltan and not (out / "volumen.json").is_file():
+        faltan = ["volumen"]
+    return faltan
 
 
 def salidas_completas(out, idiomas=None):
-    return (out / "volumen.json").is_file() and all(
-        (out / ("%s.%s" % (idioma, ext))).is_file()
-        for idioma in (idiomas or IDIOMAS)
-        for ext in ("wav", "srt")
-    )
+    return not falta_para(out, idiomas or IDIOMAS)
 
 
-def comando_caso(caso, args, extra=(), es_txt=None, voces=None, idiomas=None):
+def comando_caso(caso, args, extra=(), voces=None, idiomas=None):
     cmd = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -858,8 +870,6 @@ def comando_caso(caso, args, extra=(), es_txt=None, voces=None, idiomas=None):
     ]
     if VOICES_JSON.is_file():
         cmd += ["--voices-json", str(VOICES_JSON)]
-    if es_txt:
-        cmd += ["--es", str(es_txt)]
     cmd += [
         "--out-dir", args.out_dir,
         "--max-chars", str(args.max_chars),
@@ -885,43 +895,30 @@ def comando_caso(caso, args, extra=(), es_txt=None, voces=None, idiomas=None):
 
 def procesar_todos(args):
     global IDIOMAS
-    if any([args.caso, args.es, args.en, args.pt, args.de, args.out, args.cache]):
+    if any([args.caso, args.es, args.en, args.pt, args.out, args.cache]):
         raise SystemExit(
             "voz_3idiomas: --todos no se combina con --caso/--es/--en/--pt/--out/--cache."
         )
 
     base_out = VAULT_ROOT / args.out_dir
     listos, bloqueados = casos_con_tres_guiones(VAULT_ROOT)
+    sin_voz = [caso for caso in listos if caso_omitido(caso)]
+    listos = [caso for caso in listos if not caso_omitido(caso)]
     if not listos and not bloqueados:
         print("No hay casos con 02_produccion/**/2_guion.md en %s." % VAULT_ROOT)
         return 0
 
-    txts = {}
-    sin_txt = []
-    if args.desde_txt:
-        for caso in listos:
-            txt = txt_del_caso(base_out, caso)
-            if txt:
-                txts[caso] = txt
-            else:
-                sin_txt.append(caso)
-        listos = [caso for caso in listos if caso in txts]
-
     print("Casos con es+en+pt: %d" % len(listos))
     print("Casos sin las tres traducciones: %d" % len(bloqueados))
+    print("Casos done: %d (done.md o Status: Published en 5_publicacion.md)" % len(sin_voz))
     for caso in bloqueados:
         print("  BLOQUEADO: %s" % caso)
-    if args.desde_txt:
-        print("TXT de guion en %s/: %d" % (base_out.name, len(txts)))
-        print("Casos sin TXT en %s/: %d" % (base_out.name, len(sin_txt)))
-        for caso in sin_txt:
-            print("  SIN TXT: %s" % caso)
     sys.stdout.flush()
 
     if args.verificar:
         fallos = 0
         for caso in listos:
-            out = base_out / caso.name
+            out = carpeta_salida(base_out, caso)
             IDIOMAS = idiomas_del_caso(caso)
             print("\n=== VERIFICAR: %s ===" % caso)
             try:
@@ -933,7 +930,7 @@ def procesar_todos(args):
 
     procesados = omitidos = fallidos = 0
     for n, caso in enumerate(listos, 1):
-        out = base_out / caso.name
+        out = carpeta_salida(base_out, caso)
         idiomas = idiomas_del_caso(caso)
         IDIOMAS = idiomas
         voces = voces_del_caso(caso, VOCES_CFG, VOCES_CLI)
@@ -943,8 +940,7 @@ def procesar_todos(args):
         if not args.force and salidas_completas(out, idiomas):
             sys.stdout.flush()
             r = subprocess.run(
-                comando_caso(caso, args, ["--verificar"], es_txt=txts.get(caso),
-                             voces=voces, idiomas=idiomas),
+                comando_caso(caso, args, ["--verificar"], voces=voces, idiomas=idiomas),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
@@ -960,7 +956,7 @@ def procesar_todos(args):
             print("Las salidas existentes no verifican; se regenera.")
 
         cmd = comando_caso(caso, args, ["--dry-run"] if args.dry_run else [],
-                           es_txt=txts.get(caso), voces=voces, idiomas=idiomas)
+                           voces=voces, idiomas=idiomas)
         sys.stdout.flush()
         r = subprocess.run(cmd, text=True, stdin=subprocess.DEVNULL)
         if r.returncode != 0:
@@ -973,7 +969,7 @@ def procesar_todos(args):
 
         sys.stdout.flush()
         v = subprocess.run(
-            comando_caso(caso, args, ["--verificar"], es_txt=txts.get(caso), voces=voces, idiomas=idiomas),
+            comando_caso(caso, args, ["--verificar"], voces=voces, idiomas=idiomas),
             text=True,
             stdin=subprocess.DEVNULL,
         )
@@ -988,8 +984,7 @@ def procesar_todos(args):
     print("Omitidos:   %d" % omitidos)
     print("Fallidos:   %d" % fallidos)
     print("Bloqueados: %d (faltan 2_guion_en.md y/o 2_guion_pt.md)" % len(bloqueados))
-    if sin_txt:
-        print("Sin TXT:    %d (no estan en %s/)" % (len(sin_txt), base_out.name))
+    print("Done:       %d (done.md o Status: Published en 5_publicacion.md)" % len(sin_voz))
     if bloqueados:
         print("Para que el lote haga todas las voces, agrega las traducciones a:")
         for caso in bloqueados:
@@ -1000,7 +995,7 @@ def procesar_todos(args):
 def main():
     global IDIOMAS, VAULT_ROOT, RUTAS_JSON, VOICES_JSON, VOCES_CFG, VOCES_CLI
     ap = argparse.ArgumentParser(
-        description="Genera es/en/pt (y de si hay guion aleman) con VoxCPM y alinea las versiones por escenas."
+        description="Genera es/en/pt con VoxCPM y alinea las versiones por escenas."
     )
     ap.add_argument("--vault", default=None, help="raiz del vault/proyecto (default: cwd)")
     ap.add_argument(
@@ -1008,18 +1003,16 @@ def main():
         default=None,
         help="voices.json con la voz por idioma y por canal (default: <vault>/Sensible/voices.json)",
     )
-    ap.add_argument("--caso", default=None, help="carpeta del video; busca 2_guion.md, _en, _pt (y _de si existe)")
+    ap.add_argument("--caso", default=None, help="carpeta del video; busca 2_guion.md, _en y _pt")
     ap.add_argument("--es", default=None, help="guion espanol (.md o .txt)")
     ap.add_argument("--en", default=None, help="guion ingles (.md o .txt)")
     ap.add_argument("--pt", default=None, help="guion portugues (.md o .txt)")
-    ap.add_argument("--de", default=None, help="guion aleman (.md o .txt, opcional)")
     ap.add_argument("--out", default=None, help="carpeta de los finales (default: Generate/<slug>)")
     ap.add_argument("--cache", default=None, help="carpeta de escenas y bloques (default: Generate/<slug>/voz)")
     ap.add_argument("--out-dir", default="Generate", help="carpeta raiz de salida cuando no se pasa --out (default: Generate)")
     ap.add_argument("--voz-es", default=None, help="default: voices.json o %s" % VOCES_DEFAULT["es"])
     ap.add_argument("--voz-en", default=None, help="default: voices.json o %s" % VOCES_DEFAULT["en"])
     ap.add_argument("--voz-pt", default=None, help="default: voices.json o %s" % VOCES_DEFAULT["pt"])
-    ap.add_argument("--voz-de", default=None, help="default: voices.json o %s" % VOCES_DEFAULT["de"])
     ap.add_argument("--server-url", default=SERVER_DEFAULT)
     ap.add_argument("--max-chars", type=int, default=MAX_CHARS_DEFAULT)
     ap.add_argument("--cfg", type=float, default=2.0)
@@ -1032,9 +1025,7 @@ def main():
     ap.add_argument("--solo-normalizar", action="store_true", help="normaliza el volumen de WAV ya alineados y termina")
     ap.add_argument("--sin-normalizar", action="store_true", help="no normaliza el volumen")
     ap.add_argument("--verificar", action="store_true", help="comprueba salidas ya generadas y termina")
-    ap.add_argument("--todos", action="store_true", help="procesa todos los casos con 2_guion.md, _en y _pt (+_de si existe); salta los ya verificados")
-    ap.add_argument("--desde-txt", action="store_true",
-                    help="usa los .txt de la carpeta --out-dir como guion espanol y procesa solo los casos que los tengan")
+    ap.add_argument("--todos", action="store_true", help="procesa todos los casos con 2_guion.md, _en y _pt; salta los ya verificados")
     args = ap.parse_args()
 
     VAULT_ROOT = Path(args.vault).expanduser().resolve() if args.vault else Path.cwd()
@@ -1045,7 +1036,7 @@ def main():
         else VAULT_ROOT / "Sensible" / "voices.json"
     )
     VOCES_CFG = cargar_voices_json(VOICES_JSON)
-    VOCES_CLI = {idioma: getattr(args, "voz_%s" % idioma) for idioma in ("es", "en", "pt", "de")}
+    VOCES_CLI = {idioma: getattr(args, "voz_%s" % idioma) for idioma in ("es", "en", "pt")}
 
     if args.todos:
         raise SystemExit(procesar_todos(args))
@@ -1056,43 +1047,31 @@ def main():
             fuente_es = resolver(args.es)
         else:
             fuente_es = caso / "2_guion.md"
-            if args.desde_txt:
-                txt = txt_del_caso(VAULT_ROOT / args.out_dir, caso)
-                if txt:
-                    fuente_es = txt
         fuentes = {
             "es": fuente_es,
             "en": resolver(args.en) if args.en else caso / "2_guion_en.md",
             "pt": resolver(args.pt) if args.pt else caso / "2_guion_pt.md",
         }
-        if args.de:
-            fuentes["de"] = resolver(args.de)
-        elif (caso / "2_guion_de.md").is_file() and de_habilitado():
-            fuentes["de"] = caso / "2_guion_de.md"
-        IDIOMAS = [i for i in ("es", "en", "pt", "de") if i in fuentes]
-        out = resolver(args.out) if args.out else VAULT_ROOT / args.out_dir / caso.name
-        cache = resolver(args.cache) if args.cache else VAULT_ROOT / args.out_dir / caso.name / "voz"
+        IDIOMAS = [i for i in ("es", "en", "pt") if i in fuentes]
+        out = resolver(args.out) if args.out else carpeta_salida(VAULT_ROOT / args.out_dir, caso)
+        cache = resolver(args.cache) if args.cache else out / "voz"
     else:
         if not (args.es and args.en and args.pt):
-            raise SystemExit("voz_3idiomas: pasa --caso o los tres --es/--en/--pt (--de opcional).")
+            raise SystemExit("voz_3idiomas: pasa --caso o los tres --es/--en/--pt.")
         fuentes = {"es": resolver(args.es), "en": resolver(args.en), "pt": resolver(args.pt)}
-        if args.de:
-            fuentes["de"] = resolver(args.de)
-        IDIOMAS = [i for i in ("es", "en", "pt", "de") if i in fuentes]
+        IDIOMAS = [i for i in ("es", "en", "pt") if i in fuentes]
         if not args.out:
             raise SystemExit("voz_3idiomas: con --es/--en/--pt hace falta --out.")
         out = resolver(args.out)
         cache = resolver(args.cache) if args.cache else out / "voz"
 
     if args.verificar:
-        if "de" not in IDIOMAS and (out / "de.wav").is_file():
-            IDIOMAS = IDIOMAS + ["de"]
         verificar(out)
+        if args.caso:
+            marcar_done(resolver(args.caso))
         return
 
     if args.solo_normalizar:
-        if "de" not in IDIOMAS and (out / "de.wav").is_file():
-            IDIOMAS = IDIOMAS + ["de"]
         normalizar_volumen(out)
         return
 
@@ -1216,6 +1195,8 @@ def main():
         )
         if not args.sin_normalizar:
             normalizar_volumen(out)
+    if args.caso:
+        marcar_done(resolver(args.caso))
 
 
 if __name__ == "__main__":

@@ -221,7 +221,7 @@ ambos sobre el mismo server recién cargado y con seeds aleatorias (producción)
 
 ```powershell
 # Terminal A
-python voxcpm_server.py            # esperar "Servidor listo"
+python app/voxcpm_server.py            # esperar "Servidor listo"
 
 # Terminal B — benchmark con seed fija y hashes
 python benchmark_voxcpm_inference.py --script-file benchmarks\bench_script.txt --limit 8 --warmup-count 2 --seed 1234 --output-json candidato.json

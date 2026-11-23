@@ -328,9 +328,9 @@ def main():
     except VoxCPMServerError as exc:
         print(f"ERROR: {exc}")
         print("\nAbre otra terminal y espera a que diga 'Servidor listo':")
-        print("  python voxcpm_server.py")
+        print("  python app/voxcpm_server.py")
         print("\nPara probar optimize despues:")
-        print("  python voxcpm_server.py --optimize")
+        print("  python app/voxcpm_server.py --optimize")
         raise SystemExit(1) from exc
     print(f"Servidor VoxCPM listo: {health.get('model_id', MODEL_ID)}")
     print(f"Optimize: {health.get('optimize')}")

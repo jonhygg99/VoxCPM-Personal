@@ -348,3 +348,172 @@ def test_manager_pending_watch_detects_interrupted_shorts(tmp_path):
     (shorts_dir / "short_2.wav").write_bytes(b"RIFF")
     assert voxcpm_manager.plan_watch(txt_path, watch_dir)["ok"] is True
     assert voxcpm_manager.pendientes_watch(proyecto) == []
+
+
+def test_manager_resumen_voces_incluye_idioma_solo_de_canal(tmp_path):
+    """Un idioma que solo aparece en un canal (arcanum) debe verse en el resumen."""
+    import json
+
+    import voxcpm_manager
+
+    sensible = tmp_path / "Sensible"
+    sensible.mkdir()
+    (sensible / "voices.json").write_text(
+        json.dumps(
+            {
+                "default": {"es": "juan_sanchez"},
+                "canales": {"arcanum": {"en": "jax", "pt": "leo_antonio"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    proyecto = voxcpm_manager.Proyecto(alias="test", nombre="Test", vault=tmp_path, modo="3lang")
+    assert voxcpm_manager.resumen_voces(proyecto) == "es=juan_sanchez en=jax pt=leo_antonio"
+
+
+def test_omitido_txt_con_marcador_done(tmp_path):
+    assert watch_generate.omitido(str(tmp_path / "cine script.txt")) is False
+    (tmp_path / "cine script.done.md").write_text("", encoding="utf-8")
+    assert watch_generate.omitido(str(tmp_path / "cine script.txt")) is True
+
+
+def test_process_file_omite_txt_marcado_done(tmp_path, monkeypatch):
+    """El marcador saca el txt del automatico (scan_once); --txt manual sigue generando."""
+    watch_dir = tmp_path
+    txt_path = watch_dir / "cine script.txt"
+    txt_path.write_text("hola", encoding="utf-8")
+    (watch_dir / "cine script.done").write_text("", encoding="utf-8")
+    _backdate(txt_path)
+    calls = []
+    monkeypatch.setattr(watch_generate.generate_script, "run", lambda **kw: calls.append(kw))
+    watch_generate.scan_once(str(watch_dir), "http://127.0.0.1:8765", qa=None, validate_audio=False)
+    assert calls == []
+    watch_generate.process_file(str(txt_path), str(watch_dir), "http://127.0.0.1:8765",
+                                qa=None, validate_audio=False)
+    assert len(calls) == 1
+
+
+def test_manager_pending_watch_ignora_txt_done(tmp_path):
+    import voxcpm_manager
+
+    watch_dir = tmp_path / "Generate"
+    watch_dir.mkdir()
+    txt_path = watch_dir / "cine script.txt"
+    txt_path.write_text("hola", encoding="utf-8")
+    (watch_dir / "cine script.done").write_text("", encoding="utf-8")
+    proyecto = voxcpm_manager.Proyecto(alias="test", nombre="Test", vault=tmp_path, modo="watch")
+    assert voxcpm_manager.pendientes_watch(proyecto) == []
+
+
+def test_lineas_proyecto_etiqueta_cabe_en_la_fila(tmp_path, monkeypatch):
+    import voxcpm_manager
+
+    monkeypatch.setattr(voxcpm_manager, "resumen_voces", lambda p: "es=juan_sanchez en=jax pt=leo_antonio")
+    monkeypatch.setattr(voxcpm_manager, "resumen_faltantes", lambda p, lista: "falta: es,en,pt")
+    proyecto = voxcpm_manager.Proyecto(alias="t", nombre="Archivo Clasificado", vault=tmp_path, modo="3lang")
+
+    lineas = voxcpm_manager.lineas_proyecto(5, proyecto, "3lang", ["caso"], "")
+
+    assert len(lineas) == 2
+    assert lineas[0].endswith("pend. falta: es,en,pt")
+    assert all(len(linea) <= voxcpm_manager.ANCHO_MENU for linea in lineas)
+
+
+def test_lineas_proyecto_etiqueta_larga_baja_junto_a_las_voces(tmp_path, monkeypatch):
+    import voxcpm_manager
+
+    monkeypatch.setattr(voxcpm_manager, "resumen_voces", lambda p: "es=david")
+    monkeypatch.setattr(voxcpm_manager, "resumen_faltantes", lambda p, lista: "falta: enx2, pt, volumen")
+    proyecto = voxcpm_manager.Proyecto(alias="t", nombre="Archivo Clasificado", vault=tmp_path, modo="3lang")
+
+    lineas = voxcpm_manager.lineas_proyecto(1, proyecto, "3lang", ["caso"], "")
+
+    assert len(lineas) == 2
+    assert lineas[1] == "       falta: enx2, pt, volumen \u00b7 voces: es=david"
+    assert all(len(linea) <= voxcpm_manager.ANCHO_MENU for linea in lineas)
+
+
+def test_lineas_proyecto_etiqueta_y_voces_largas_en_lineas_separadas(tmp_path, monkeypatch):
+    import voxcpm_manager
+
+    monkeypatch.setattr(voxcpm_manager, "resumen_voces", lambda p: "es=juan_sanchez en=jax pt=leo_antonio")
+    monkeypatch.setattr(voxcpm_manager, "resumen_faltantes", lambda p, lista: "falta: enx2, pt, volumen")
+    proyecto = voxcpm_manager.Proyecto(alias="t", nombre="Archivo Clasificado", vault=tmp_path, modo="3lang")
+
+    lineas = voxcpm_manager.lineas_proyecto(1, proyecto, "3lang", ["caso"], "")
+
+    assert len(lineas) == 3
+    assert lineas[1].strip() == "falta: enx2, pt, volumen"
+    assert lineas[2].startswith("       voces:")
+    assert all(len(linea) <= voxcpm_manager.ANCHO_MENU for linea in lineas)
+
+
+def test_lineas_proyecto_sin_pendientes_ni_etiqueta(tmp_path, monkeypatch):
+    import voxcpm_manager
+
+    monkeypatch.setattr(voxcpm_manager, "resumen_voces", lambda p: "es=david")
+    proyecto = voxcpm_manager.Proyecto(alias="t", nombre="Listas", vault=tmp_path, modo="watch")
+
+    lineas = voxcpm_manager.lineas_proyecto(1, proyecto, "watch", [], "")
+
+    assert len(lineas) == 2
+    assert "falta:" not in lineas[0]
+
+
+def test_resaltar_proyecto_no_cambia_el_ancho_visible(tmp_path, monkeypatch):
+    import re
+
+    import voxcpm_manager
+
+    monkeypatch.setattr(voxcpm_manager, "resumen_voces", lambda p: "es=david")
+    monkeypatch.setattr(voxcpm_manager, "colorido", lambda texto, color, activo=None: f"\033[1m{texto}\033[0m")
+    proyecto = voxcpm_manager.Proyecto(alias="t", nombre="Listas de Famosos", vault=tmp_path, modo="watch")
+
+    linea = voxcpm_manager.lineas_proyecto(1, proyecto, "watch", [], "")[0]
+    resaltada = voxcpm_manager.resaltar_proyecto(linea, proyecto)
+
+    assert "\033[1m" in resaltada
+    assert re.sub(r"\033\[[0-9;]*m", "", resaltada) == linea
+
+
+def test_resaltar_pendiente_solo_con_pendientes(tmp_path, monkeypatch):
+    import voxcpm_manager
+
+    monkeypatch.setattr(voxcpm_manager, "resumen_voces", lambda p: "es=david")
+    monkeypatch.setattr(voxcpm_manager, "colorido", lambda texto, color, activo=None: f"\033[1m{texto}\033[0m")
+    proyecto = voxcpm_manager.Proyecto(alias="t", nombre="Listas", vault=tmp_path, modo="watch")
+
+    con_pendientes = voxcpm_manager.lineas_proyecto(1, proyecto, "watch", ["a", "b"], "")[0]
+    sin_pendientes = voxcpm_manager.lineas_proyecto(1, proyecto, "watch", [], "")[0]
+
+    assert "\033[1m" in voxcpm_manager.resaltar_pendiente(con_pendientes, 2)
+    assert voxcpm_manager.resaltar_pendiente(sin_pendientes, 0) == sin_pendientes
+
+
+def test_color_proyecto_es_estable_por_alias(tmp_path):
+    import voxcpm_manager
+
+    def proyecto(alias, nombre):
+        return voxcpm_manager.Proyecto(alias=alias, nombre=nombre, vault=tmp_path, modo="auto")
+
+    primero = proyecto("listas", "Listas de Famosos")
+    segundo = proyecto("listas", "Otro nombre")
+    otro = proyecto("chismes", "Chismes MX")
+
+    assert voxcpm_manager.color_proyecto(primero) == voxcpm_manager.color_proyecto(segundo)
+    assert voxcpm_manager.color_proyecto(primero) in voxcpm_manager.COLORES
+    assert voxcpm_manager.color_proyecto(otro) in voxcpm_manager.COLORES
+
+
+def test_bullet_segun_codificacion_de_consola():
+    import voxcpm_manager
+
+    assert voxcpm_manager.bullet(consola_utf8=True) == "\u00b7"
+    assert voxcpm_manager.bullet(consola_utf8=False) == "-"
+
+
+def test_colorido_respeta_terminal():
+    import voxcpm_manager
+
+    assert voxcpm_manager.colorido("x", "\033[96m", activo=True) == "\033[96mx\033[0m"
+    assert voxcpm_manager.colorido("x", "\033[96m", activo=False) == "x"

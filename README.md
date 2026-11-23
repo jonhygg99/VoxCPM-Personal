@@ -259,13 +259,13 @@ voxcpm --help
 ### Web Demo
 
 ```bash
-python app.py --port 8808  # then open in browser: http://localhost:8808
+python app/app.py --port 8808  # then open in browser: http://localhost:8808
 ```
 
 Use `--device` to choose the runtime device:
 
 ```bash
-python app.py --device auto
+python app/app.py --device auto
 ```
 
 Supported values are `auto`, `cpu`, `mps`, `cuda`, and `cuda:N`. On Apple Silicon Macs, `auto` uses MPS when available.

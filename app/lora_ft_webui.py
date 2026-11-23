@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 # Add src to sys.path
-project_root = Path(__file__).parent
+project_root = Path(__file__).parents[1]
 sys.path.insert(0, str(project_root / "src"))
 
 # Default pretrained model path: prefer VoxCPM2 if it exists, fallback to VoxCPM1.5

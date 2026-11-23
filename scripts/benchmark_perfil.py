@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RAIZ / "app"))
 sys.path.insert(0, str(RAIZ))
 
 import benchmark_voxcpm_inference as bench  # noqa: E402
@@ -98,7 +99,7 @@ def comando_server(config, puerto):
     """Comando + entorno para levantar el server con una config del barrido."""
     env = dict(os.environ)
     env["VOXCPM_STOP_CHECK_BATCH"] = str(config["stop_check_batch"])
-    cmd = [sys.executable, str(RAIZ / "voxcpm_server.py"), "--port", str(puerto)]
+    cmd = [sys.executable, str(RAIZ / "app" / "voxcpm_server.py"), "--port", str(puerto)]
     # Explicito en ambos casos: el server lee su default de optimize del perfil
     # de esta maquina, y sin flag heredaria el ganador anterior (barrido sucio).
     cmd.append("--optimize" if config["optimize"] else "--no-optimize")

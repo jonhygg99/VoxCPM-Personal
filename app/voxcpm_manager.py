@@ -19,6 +19,13 @@ Uso:
   voxcpm.bat --doctor                 valida rutas, voces, venv y servidor
   voxcpm.bat --escanear               agrega vaults nuevos al registro
   voxcpm.bat listas -- --dry-run      pasa argumentos al generador
+  voxcpm.bat listas --empalmar -- --stem ... --clip-a ... --clip-b ... --hook "..."
+                                      empalma CTAs en un audio ya narrado
+  voxcpm.bat archivo --pt -- --txt "..."   solo la voz portuguesa de ese txt
+  voxcpm.bat --vault "D:/.../vault" --accion watch   accion directa (shims)
+
+Modos: 3lang (guiones es/en/pt) y watch (VoxCPM local por .txt). La voz se
+genera siempre en local; el vault no necesita scripts de voz.
 """
 
 from __future__ import annotations
@@ -30,13 +37,15 @@ import re
 import shutil
 import socket
 import subprocess
+import hashlib
 import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
+APP = ROOT / "app"
 SCRIPTS = ROOT / "scripts"
 VENV_PY = ROOT / "venv_voxcpm" / "Scripts" / "python.exe"
 SERVER_URL = "http://127.0.0.1:8765"
@@ -44,9 +53,20 @@ REGISTRY = ROOT / "Sensible" / "proyectos.json"
 EJEMPLO = ROOT / "Sensible" / "proyectos.ejemplo.json"
 LOGS = ROOT / "logs" / "voz"
 WATCH_LOCK_PORT = 8766
+ANCHO_MENU = 66
+NEGRITA, RESET = "\033[1m", "\033[0m"
+ROJO = "\033[91m"
+# Paleta amplia para que dos proyectos seguidos no compartan color casi nunca.
+COLORES = (
+    "\033[96m", "\033[93m", "\033[95m", "\033[92m", "\033[94m", "\033[38;5;208m",
+    "\033[38;5;135m", "\033[38;5;51m", "\033[38;5;213m", "\033[38;5;154m",
+    "\033[38;5;220m", "\033[91m",
+)
+PT_SCRIPT = SCRIPTS / "generar_voz_pt.py"
+EMPALME_SCRIPT = SCRIPTS / "empalmar_cta.py"
 
 SIN_SERVIDOR = False
-IDIOMAS_ORDEN = ("es", "en", "pt", "de")
+IDIOMAS_ORDEN = ("es", "en", "pt")
 
 
 # ─── Utilidades ──────────────────────────────────────────────────────────────
@@ -224,10 +244,18 @@ def resumen_voces(p):
     cfg = config_voces(p)
     entrada = cfg.get("default")
     if isinstance(entrada, str):
-        return f"es={entrada}"
-    if isinstance(entrada, dict):
-        return " ".join(f"{i}={entrada[i]}" for i in IDIOMAS_ORDEN if entrada.get(i))
-    return "sin voices.json"
+        voces = {"es": entrada}
+    elif isinstance(entrada, dict):
+        voces = {i: entrada[i] for i in IDIOMAS_ORDEN if entrada.get(i)}
+    else:
+        return "sin voices.json"
+    # Idiomas que solo existen en un canal.
+    for valor in (cfg.get("canales") or {}).values():
+        if isinstance(valor, dict):
+            for idioma in IDIOMAS_ORDEN:
+                if valor.get(idioma) and not voces.get(idioma):
+                    voces[idioma] = valor[idioma]
+    return " ".join(f"{i}={voces[i]}" for i in IDIOMAS_ORDEN if voces.get(i))
 
 
 def tabla_voces(p):
@@ -291,8 +319,12 @@ def _hay_casos_3lang(p):
     base = p.vault / "02_produccion"
     if not base.is_dir():
         return False
-    for guion in base.glob("**/2_guion.md"):
-        caso = guion.parent
+    # os.walk y no pathlib.glob: glob aborta si un subdirectorio desaparece a
+    # mitad del barrido (carpetas sincronizadas por Syncthing en Salvaje Oeste).
+    for raiz, _dirs, ficheros in os.walk(base, onerror=lambda _e: None):
+        if "2_guion.md" not in ficheros:
+            continue
+        caso = Path(raiz)
         if caso.name == "_TEMPLATE":
             continue
         if (caso / "2_guion_en.md").is_file() and (caso / "2_guion_pt.md").is_file():
@@ -301,7 +333,7 @@ def _hay_casos_3lang(p):
 
 
 def detectar_modo(p):
-    if p.modo in ("3lang", "watch", "api", "servidor"):
+    if p.modo in ("3lang", "watch", "servidor"):
         return p.modo
     if _hay_casos_3lang(p):
         return "3lang"
@@ -320,11 +352,13 @@ def pendientes_3lang(p):
     base = p.generate
     pendientes = []
     for caso in casos_3lang(p):
+        if v3.caso_omitido(caso):
+            continue
         sufijos = ("", "_en", "_pt")
         if not all((caso / f"2_guion{s}.md").is_file() for s in sufijos):
             continue
         idiomas = v3.idiomas_del_caso(caso)
-        if not v3.salidas_completas(base / caso.name, idiomas):
+        if not v3.salidas_completas(v3.carpeta_salida(base, caso), idiomas):
             pendientes.append(caso)
     return pendientes
 
@@ -335,6 +369,8 @@ _WATCH_MODULE = None
 def modulo_watch():
     global _WATCH_MODULE
     if _WATCH_MODULE is None:
+        if str(APP) not in sys.path:
+            sys.path.insert(0, str(APP))
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
         import watch_generate
@@ -359,11 +395,17 @@ def pendientes_watch(p):
     watch = p.generate
     if not watch.is_dir():
         return []
+    wg = modulo_watch()
     return [
         txt
         for txt in sorted(watch.glob("*.txt"))
-        if not plan_watch(txt, watch)["ok"]
+        if not wg.omitido(str(txt)) and not plan_watch(txt, watch)["ok"]
     ]
+
+
+def cmd_pt(p, extra):
+    cmd = [python_exe(), str(PT_SCRIPT), "--vault", str(p.vault)]
+    return cmd + list(p.args) + list(extra)
 
 
 def pendientes(p, modo=None):
@@ -375,13 +417,112 @@ def pendientes(p, modo=None):
     return []
 
 
-def resumen_pendientes(p, modo=None):
+def color_proyecto(p):
+    """Color estable por alias: no cambia al anadir o quitar proyectos."""
+    return COLORES[hashlib.sha256(p.alias.encode("utf-8")).digest()[0] % len(COLORES)]
+
+
+def habilitar_ansi():
+    """Activa las secuencias ANSI en la consola de Windows (VT processing)."""
+    if os.name != "nt":
+        return
     try:
-        return len(pendientes(p, modo))
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        modo = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(modo)):
+            kernel32.SetConsoleMode(handle, modo.value | 4)
+    except Exception:
+        pass
+
+
+def _consola_utf8():
+    """True si la salida admite UTF-8 (consola en 65001 o salida redirigida)."""
+    if not sys.stdout.isatty() or os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        return ctypes.windll.kernel32.GetConsoleOutputCP() == 65001
+    except Exception:
+        return False
+
+
+def bullet(consola_utf8=None):
+    """Punto medio si la consola lo pinta; guion ASCII si no (cmd antiguas)."""
+    if consola_utf8 is None:
+        consola_utf8 = _consola_utf8()
+    return "\u00b7" if consola_utf8 else "-"
+
+
+def colorido(texto, color, activo=None):
+    """Aplica un color ANSI solo si la salida es una terminal."""
+    if activo is None:
+        activo = sys.stdout.isatty()
+    return f"{color}{texto}{RESET}" if activo and color else texto
+
+
+def resaltar_proyecto(linea, p, color=""):
+    """Pone en negrita y color el nombre del proyecto (columna fija de 26)."""
+    campo = f"{p.nombre:<26}"
+    return linea.replace(campo, colorido(campo, NEGRITA + color), 1)
+
+
+def resaltar_pendiente(linea, pend):
+    """Marca en rojo el recuento cuando hay pendientes."""
+    marca = f"{str(pend):>4} pend."
+    if not isinstance(pend, int) or pend <= 0 or marca not in linea:
+        return linea
+    return linea.replace(marca, colorido(marca, NEGRITA + ROJO), 1)
+
+
+def resumen_faltantes(p, casos):
+    """Etiqueta agregada de lo que falta en los pendientes ya calculados."""
+    if not casos:
+        return ""
+    cuenta = {}
+    for caso in casos:
+        for item in falta_caso(p, caso):
+            cuenta[item] = cuenta.get(item, 0) + 1
+    if not cuenta:
+        return ""
+    orden = [i for i in ("es", "en", "pt", "volumen") if i in cuenta]
+    orden += [i for i in cuenta if i not in orden]
+    return "falta: " + ", ".join(f"{i}x{cuenta[i]}" if cuenta[i] > 1 else i for i in orden)
+
+
+def pendientes_y_error(p, modo=None):
+    """Lista de pendientes y, si algo falla, el mensaje en vez de la excepcion."""
+    try:
+        return pendientes(p, modo), ""
     except SystemExit:
         raise
     except Exception as exc:
-        return f"error: {exc}"
+        return [], f"error: {exc}"
+
+
+def lineas_proyecto(i, p, modo, lista, error=""):
+    """Filas del menu principal para un proyecto, sin pasar de ANCHO_MENU."""
+    pend = error or len(lista)
+    fila = f"  [{i}] {p.nombre:<26} {modo:<5} {str(pend):>4} pend."
+    voces = f"voces: {resumen_voces(p)}"
+    etiqueta = resumen_faltantes(p, lista) if modo == "3lang" and not error else ""
+    compacta = etiqueta.replace(", ", ",")
+    if not compacta:
+        return [fila, f"       {voces}"]
+    if len(fila) + 1 + len(compacta) <= ANCHO_MENU:
+        return [f"{fila} {compacta}", f"       {voces}"]
+    detalle = f"       {etiqueta}"
+    if len(detalle) + 3 + len(voces) <= ANCHO_MENU:
+        return [fila, f"{detalle} {bullet()} {voces}"]
+    return [fila, detalle, f"       {voces}"]
+
+
+def resumen_pendientes(p, modo=None):
+    lista, error = pendientes_y_error(p, modo)
+    return error or len(lista)
 
 
 # ─── Servidor ────────────────────────────────────────────────────────────────
@@ -503,10 +644,38 @@ def cmd_3lang(p, extra, voces=None):
     return cmd + list(p.args) + list(extra)
 
 
+def cmd_empalme(p, extra):
+    cmd = [python_exe(), str(EMPALME_SCRIPT), "--vault", str(p.vault)]
+    return cmd + list(p.args) + list(extra)
+
+
+def empalmar_interactivo(p):
+    """Empalma CTAs nuevos en un audio ya narrado (no gasta creditos)."""
+    if not EMPALME_SCRIPT.is_file():
+        print(f"ERROR: falta {EMPALME_SCRIPT}")
+        return
+    print(f"\nEmpalmar CTAs en un audio de {p.out_dir} (no regenera voz).")
+    stem = preguntar("  Carpeta a modificar (Enter = cancelar): ")
+    if not stem:
+        return
+    clip_a = preguntar("  Carpeta del clip A (va tras el hook): ")
+    clip_b = preguntar("  Carpeta del clip B (sustituye al CTA viejo): ")
+    hook = preguntar("  Frase final del hook: ")
+    if not (clip_a and clip_b and hook):
+        print("Cancelado: faltan datos.")
+        return
+    codigo = ejecutar(
+        p,
+        f"cta-{stem}",
+        cmd_empalme(p, ["--stem", stem, "--clip-a", clip_a, "--clip-b", clip_b, "--hook", hook]),
+    )
+    print(f"Empalme terminado (exit {codigo}).")
+
+
 def cmd_watch(p, extra):
     cmd = [
         python_exe(),
-        str(ROOT / "watch_generate.py"),
+        str(ROOT / "app" / "watch_generate.py"),
         "--watch-dir",
         str(p.generate),
         "--voice",
@@ -520,14 +689,23 @@ def cmd_watch(p, extra):
 # ─── Seleccion de casos / txt ────────────────────────────────────────────────
 
 
+def falta_caso(p, caso):
+    """Que le falta al caso, segun el mismo criterio que cuenta los pendientes."""
+    v3 = cargar_voces_en_motor(p)
+    return v3.falta_para(v3.carpeta_salida(p.generate, caso), v3.idiomas_del_caso(caso))
+
+
 def elegir_caso(p, solo_pendientes=False):
     casos = pendientes_3lang(p) if solo_pendientes else casos_3lang(p)
     if not casos:
-        print("No hay casos disponibles." if solo_pendientes else "No hay casos con 2_guion.md.")
+        print("No hay casos pendientes." if solo_pendientes else "No hay casos con 2_guion.md.")
         return None
     print("\nCasos:")
     for i, caso in enumerate(casos, 1):
-        print(f"  [{i}] {caso.name}")
+        detalle = ""
+        if solo_pendientes:
+            detalle = "   falta: " + ", ".join(falta_caso(p, caso))
+        print(f"  [{i}] {caso.name}{detalle}")
     sel = preguntar("\nNumero (Enter = cancelar): ")
     if not sel:
         return None
@@ -602,13 +780,23 @@ def tras_accion(p, proyectos):
 def menu_proyecto(p, proyectos):
     modo = detectar_modo(p)
     while True:
-        print("\n" + "=" * 66)
-        print(f"  {p.nombre}  [{modo}]")
+        print("\n" + "=" * ANCHO_MENU)
+        print(f"  {colorido(p.nombre, NEGRITA + color_proyecto(p))}  [{modo}]")
         print(f"  vault: {p.vault}")
         print(f"  voces: {resumen_voces(p)}")
+        lista, error = pendientes_y_error(p, modo)
+        pend = error or len(lista)
+        print(f"  pendientes: {colorido(str(pend), ROJO if isinstance(pend, int) and pend else '')}")
+        for caso in lista[:5]:
+            detalle = ""
+            if modo == "3lang":
+                detalle = "   falta: " + ", ".join(falta_caso(p, caso))
+            print(f"    {bullet()} {Path(caso).stem}{detalle}")
+        if len(lista) > 5:
+            print(f"    {bullet()} y {len(lista) - 5} mas")
         estado = health()
         print(f"  servidor: {'listo en 8765' if estado else 'parado'}")
-        print("=" * 66)
+        print("=" * ANCHO_MENU)
         if modo == "3lang":
             print("  [1] Generar pendientes (--todos)")
             print("  [2] Generar un caso concreto")
@@ -616,9 +804,6 @@ def menu_proyecto(p, proyectos):
             print("  [4] Solo alinear un caso")
             print("  [5] Normalizar volumen de un caso")
             print("  [6] Dry-run de pendientes")
-        elif modo == "api":
-            print("  Este proyecto usa un proveedor de API, no el servidor local.")
-            print("  Sigue usando su Scripts/voice/generar_voz_api.py.")
         else:
             print("  [1] Vigilar carpeta (watch)")
             print("  [2] Procesar pendientes una vez")
@@ -626,6 +811,7 @@ def menu_proyecto(p, proyectos):
         print("  [v] Ver voces por canal")
         print("  [s] Arrancar / comprobar servidor")
         print("  [r] Recargar pendientes")
+        print("  [c] Empalmar CTAs en un audio ya narrado")
         print("  [o] Abrir carpeta Generate")
         print("  [0] Volver")
         sel = preguntar("\nOpcion: ").lower()
@@ -645,8 +831,8 @@ def menu_proyecto(p, proyectos):
             abrir_carpeta(p.generate)
             continue
 
-        if modo == "api":
-            print("Modo api no gestionado por este lanzador.")
+        if sel == "c":
+            empalmar_interactivo(p)
             continue
 
         if modo == "3lang":
@@ -657,7 +843,7 @@ def menu_proyecto(p, proyectos):
                     if destino:
                         return destino
             elif sel == "2":
-                caso = elegir_caso(p)
+                caso = elegir_caso(p, solo_pendientes=True)
                 if caso and arrancar_servidor():
                     ejecutar(p, f"caso-{caso.name}", cmd_3lang(p, ["--caso", str(caso)]))
                     destino = tras_accion(p, proyectos)
@@ -730,19 +916,48 @@ def menu_proyecto(p, proyectos):
 # ─── Menu principal ──────────────────────────────────────────────────────────
 
 
+ACCIONES = ("servidor", "3lang", "3lang-todos", "watch", "watch-once", "pt")
+
+
+def correr_accion(p, accion, extra):
+    """Accion directa sin menu; la usan los shims de los vaults."""
+    if accion == "servidor":
+        return 0 if arrancar_servidor() else 1
+    if accion == "3lang":
+        if not arrancar_servidor():
+            return 1
+        return ejecutar(p, "3lang", cmd_3lang(p, extra))
+    if accion == "3lang-todos":
+        if not arrancar_servidor():
+            return 1
+        return ejecutar(p, "3lang-todos", cmd_3lang(p, ["--todos"] + list(extra)))
+    if accion in ("watch", "watch-once"):
+        if not arrancar_servidor():
+            return 1
+        args = list(extra) if accion == "watch" else ["--once"] + list(extra)
+        return ejecutar(p, accion, cmd_watch(p, args))
+    if accion == "pt":
+        return ejecutar(p, "pt", cmd_pt(p, list(extra)))
+    print(f"Accion desconocida: {accion}")
+    return 2
+
+
 def menu_principal(datos, proyectos):
     actual = datos.get("default")
     while True:
-        print("\n" + "=" * 66)
-        print("  VoxCPM · lanzador global")
+        print("\n" + "=" * ANCHO_MENU)
+        print(f"  VoxCPM {bullet()} lanzador global")
         estado = health()
         print(f"  Servidor: {'listo en 8765' if estado else 'parado'}   Registro: {REGISTRY.name}")
-        print("=" * 66)
+        print("=" * ANCHO_MENU)
         opciones = ordenados(proyectos)
         for i, p in enumerate(opciones, 1):
             modo = detectar_modo(p)
-            pend = resumen_pendientes(p, modo)
-            print(f"  [{i}] {p.nombre:<26} {modo:<5} {str(pend):>4} pend.  {resumen_voces(p)}")
+            lista, error = pendientes_y_error(p, modo)
+            pend = error or len(lista)
+            color = color_proyecto(p)
+            for linea in lineas_proyecto(i, p, modo, lista, error):
+                print(resaltar_pendiente(resaltar_proyecto(linea, p, color), pend))
         print("\n  [a] Automático (todos los pendientes, en orden)")
         print("  [e] Escanear vaults nuevos")
         print("  [d] Doctor (validar todo)")
@@ -815,7 +1030,7 @@ def modo_auto(proyectos):
         elif modo == "watch":
             codigo = ejecutar(p, "auto-watch", cmd_watch(p, ["--once"]))
         else:
-            print("  modo api: se omite (usar su script).")
+            print("  modo no gestionado; se omite.")
             continue
         print(f"  resultado: exit {codigo}")
 
@@ -837,12 +1052,14 @@ def doctor(proyectos):
         if not cond:
             fallos += 1
 
-    print(f"\nDoctor · {ROOT}")
+    print(f"\nDoctor {bullet()} {ROOT}")
     ok(REGISTRY.is_file(), "registro de proyectos", str(REGISTRY))
     ok(VENV_PY.is_file(), "python del venv", str(VENV_PY))
     ok((SCRIPTS / "voz_3idiomas.py").is_file(), "generador 3lang", "scripts/voz_3idiomas.py")
     ok((SCRIPTS / "voxcpm_win_launcher.py").is_file(), "lanzador Windows", "scripts/voxcpm_win_launcher.py")
-    ok((ROOT / "watch_generate.py").is_file(), "watch_generate", "watch_generate.py")
+    ok((APP / "watch_generate.py").is_file(), "watch_generate", "app/watch_generate.py")
+    ok(PT_SCRIPT.is_file(), "generador pt", "scripts/generar_voz_pt.py")
+    ok(EMPALME_SCRIPT.is_file(), "empalme de CTAs", "scripts/empalmar_cta.py")
     estado = health()
     print(
         f"  [{'PASS' if estado else 'INFO'}] servidor 8765 "
@@ -952,6 +1169,7 @@ def escanear(datos, proyectos):
 
 def main():
     global SIN_SERVIDOR
+    habilitar_ansi()
     argv = sys.argv[1:]
     extra = []
     if "--" in argv:
@@ -961,16 +1179,56 @@ def main():
     parser = argparse.ArgumentParser(description="Lanzador global de VoxCPM.")
     parser.add_argument("proyecto", nargs="?", help="alias del proyecto (si falta, menu)")
     parser.add_argument("--vault", default=None, help="ruta del vault para un proyecto ad-hoc")
-    parser.add_argument("--modo", choices=["auto", "3lang", "watch", "api"], default=None)
+    parser.add_argument("--modo", choices=["auto", "3lang", "watch"], default=None)
     parser.add_argument("--auto", action="store_true", help="corre los pendientes de todos los proyectos")
     parser.add_argument("--doctor", action="store_true", help="valida rutas, voces, venv y servidor")
     parser.add_argument("--escanear", action="store_true", help="agrega vaults nuevos al registro")
     parser.add_argument("--sin-servidor", action="store_true", help="no arranca el servidor")
+    parser.add_argument("--empalmar", action="store_true",
+                        help="empalma CTAs con los argumentos pasados tras --")
+    parser.add_argument("--pt", action="store_true",
+                        help="genera solo la voz portuguesa de un .txt (args tras --)")
+    parser.add_argument("--accion", choices=ACCIONES, default=None,
+                        help="ejecuta una accion concreta sin pasar por el menu "
+                             "(lo usan los shims de Scripts/voice de los vaults)")
     parser.add_argument("--forzar", action="store_true", help="crea proyectos.json desde el ejemplo si falta")
     args = parser.parse_args(argv)
     SIN_SERVIDOR = args.sin_servidor
 
     datos, proyectos = cargar_registro(crear=args.forzar or args.escanear)
+
+    if args.accion:
+        p = None
+        if args.vault:
+            vault = Path(args.vault).expanduser().resolve()
+            p = next((q for q in proyectos.values() if q.vault.resolve() == vault), None)
+            if p is None:
+                p = Proyecto(alias=slug(vault.name), nombre=vault.name, vault=vault)
+        elif args.proyecto:
+            p = buscar_proyecto(proyectos, args.proyecto)
+        if p is None:
+            raise SystemExit("--accion necesita un proyecto conocido o --vault.")
+        if args.modo:
+            p.modo = args.modo
+        if extra:
+            p.args = list(p.args) + list(extra)
+        raise SystemExit(correr_accion(p, args.accion, []))
+
+    if args.empalmar or args.pt:
+        if args.vault:
+            vault = Path(args.vault).expanduser().resolve()
+            p = next((q for q in proyectos.values() if q.vault.resolve() == vault), None)
+            if p is None:
+                p = Proyecto(alias=slug(vault.name), nombre=vault.name, vault=vault)
+        elif args.proyecto:
+            p = buscar_proyecto(proyectos, args.proyecto)
+        else:
+            raise SystemExit("--empalmar necesita un proyecto (alias) o --vault.")
+        if p is None:
+            raise SystemExit(f"No existe el proyecto '{args.proyecto}'.")
+        if args.pt:
+            raise SystemExit(ejecutar(p, "pt", cmd_pt(p, extra)))
+        raise SystemExit(ejecutar(p, "empalmar", cmd_empalme(p, extra)))
 
     if args.doctor:
         raise SystemExit(doctor(proyectos))
